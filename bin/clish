@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# ============================================
+# Clish — Modulash Console
+# ============================================
+set -eo pipefail
+
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+readonly PROJECT_ROOT
+
+# shellcheck disable=SC1091
+source "$PROJECT_ROOT/vendor/autoload.sh"
+import "@/bootstrap.sh"
+import "@clish/console/bootstrap.sh"
+
+clish_console_bootstrap_main "$@"

@@ -1,0 +1,169 @@
+#!/bin/bash
+# ============================================
+# Command: dump-autoload — Generate aliases and facades
+# ============================================
+
+# Self-contained log functions
+log_error() { echo "[ERROR] $*" >&2; }
+log_info() { echo "[INFO] $*"; }
+log_success() { echo "[SUCCESS] $*"; }
+log_warning() { echo "[WARNING] $*" >&2; }
+
+cmd_dump-autoload_description() {
+    echo "Generate aliases and facades from modulash.json"
+}
+
+cmd_dump-autoload_handle() {
+    local project_root="$PWD"
+    local config_file="$project_root/modulash.json"
+    local output_dir="$project_root/vendor/modulash"
+    local aliases_file="$output_dir/aliases.sh"
+    local facades_file="$output_dir/facades.sh"
+
+    if [[ ! -f "$config_file" ]]; then
+        log_error "modulash.json not found in current directory: $config_file"
+        return 1
+    fi
+
+    mkdir -p "$output_dir"
+
+    normalize_path() {
+        local path="$1"
+        if [[ "$path" == "./"* ]]; then
+            path="${path#./}"
+        fi
+        if [[ -z "$path" || "$path" == "." ]]; then
+            echo "./"
+            return
+        fi
+        path=$(echo "$path" | sed 's#//*#/#g')
+        if [[ "$path" != */ ]]; then
+            path="$path/"
+        fi
+        echo "$path"
+    }
+
+    local vendor_dir
+    vendor_dir=$(jq -r '.["vendor-dir"] // "./vendor"' "$config_file")
+    vendor_dir=$(normalize_path "$vendor_dir")
+    local vendor_dir_abs="$project_root/$vendor_dir"
+
+    # ============================================
+    # 1. Generate aliases
+    # ============================================
+    aliases=()
+    paths=()
+
+    while IFS= read -r alias; do
+        [[ -z "$alias" ]] && continue
+        path=$(jq -r --arg alias "$alias" '.aliases[$alias]' "$config_file")
+        [[ -z "$path" || "$path" == "null" ]] && continue
+        path=$(normalize_path "$path")
+        aliases+=("$alias")
+        paths+=("$path")
+    done < <(jq -r '.aliases // {} | keys[]' "$config_file")
+
+    if [[ -d "$vendor_dir_abs" ]]; then
+        for vendor_subdir in "$vendor_dir_abs"/*/; do
+            [[ -d "$vendor_subdir" ]] || continue
+            for pkg_dir in "$vendor_subdir"/*/; do
+                local config="$pkg_dir/modulash.json"
+                [[ -f "$config" ]] || continue
+                local pkg_rel_path="${pkg_dir#$project_root/}"
+                pkg_rel_path=$(normalize_path "$pkg_rel_path")
+                while IFS= read -r alias; do
+                    [[ -z "$alias" ]] && continue
+                    path=$(jq -r --arg alias "$alias" '.aliases[$alias]' "$config" 2>/dev/null || true)
+                    [[ -z "$path" || "$path" == "null" ]] && continue
+                    sub_path=$(normalize_path "$path")
+                    combined="${pkg_rel_path}${sub_path}"
+                    combined=$(normalize_path "$combined")
+                    aliases+=("$alias")
+                    paths+=("$combined")
+                done < <(jq -r '.aliases // {} | keys[]' "$config" 2>/dev/null || true)
+            done
+        done
+    fi
+
+    {
+        echo '#!/bin/bash'
+        echo '# Modulash Aliases - DO NOT EDIT'
+        echo ''
+        echo '__MODULASH_ALIASES=('
+        for a in "${aliases[@]}"; do
+            printf "    '%s'\n" "$a"
+        done
+        echo ')'
+        echo ''
+        echo '__MODULASH_PATHS=('
+        for p in "${paths[@]}"; do
+            printf "    '%s'\n" "$p"
+        done
+        echo ')'
+    } > "$aliases_file"
+
+    log_success "Generated aliases: $aliases_file"
+    log_info "Total aliases: ${#aliases[@]}"
+
+    # ============================================
+    # 2. Generate facades (with automatic argument passing)
+    # ============================================
+    _generate_facades() {
+        local output="$1"
+        local root="$2"
+
+        local user_facades
+        user_facades=$(jq -r '.facade // {} | keys[]' "$root/modulash.json" 2>/dev/null)
+
+        if [[ -z "$user_facades" ]]; then
+            rm -f "$output"
+            log_info "No facades declared, skipped generation"
+            return
+        fi
+
+        {
+            echo '#!/bin/bash'
+            echo '# ============================================'
+            echo '# Auto-generated Facades - DO NOT EDIT MANUALLY'
+            echo '# ============================================'
+            echo '#'
+            echo '# Edit modulash.json to customize facades, then run dump-autoload again.'
+            echo '# Example:'
+            echo '#   "facade": {'
+            echo '#     "info": "clish_console_log_info"      # auto-pass all arguments'
+            echo '#   }'
+            echo '# ============================================'
+            echo ''
+
+            local has_any=false
+            for short in $user_facades; do
+                local body
+                body=$(jq -r --arg short "$short" '.facade[$short]' "$root/modulash.json")
+                # Validate function name
+                if [[ ! "$short" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]]; then
+                    log_warning "Invalid short name '$short'"
+                    continue
+                fi
+                # If body is a simple identifier (letters, digits, underscore), auto-add "$@"
+                if [[ "$body" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]]; then
+                    echo "function $short() { $body \"\$@\"; }"
+                else
+                    # User provided custom body, use as-is
+                    echo "function $short() { $body; }"
+                fi
+                echo "export -f $short"
+                has_any=true
+            done
+
+            if [[ "$has_any" == "false" ]]; then
+                rm -f "$output"
+                log_info "No valid facades found, removed generation"
+                return
+            fi
+        } > "$output"
+
+        log_success "Generated facades: $output"
+    }
+
+    _generate_facades "$facades_file" "$project_root"
+}

@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# ============================================
+# Command: completion — Generate Bash completion script
+# ============================================
+
+cmd_completion_description() {
+    echo "Generate Bash completion script for Clish"
+}
+
+cmd_completion_handle() {
+    cat <<'EOF'
+# Clish Bash Completion (compatible)
+_clish_completion() {
+    local cur prev
+    cur="${COMP_WORDS[COMP_CWORD]}"
+    prev="${COMP_WORDS[COMP_CWORD-1]}"
+
+    # Get available commands
+    local commands
+    if [[ -d "$PROJECT_ROOT/bin/commands" ]]; then
+        commands=$(find "$PROJECT_ROOT/bin/commands" -maxdepth 2 -type f -perm +111 -exec basename {} \; 2>/dev/null | sort -u)
+    else
+        commands="build create-project dump-autoload install completion"
+    fi
+
+    # Global options
+    local options="-h --help -q --quiet -V --version -n --no-interaction -v --verbose"
+
+    if [[ "$cur" == -* ]]; then
+        COMPREPLY=($(compgen -W "$options" -- "$cur"))
+        return
+    fi
+
+    COMPREPLY=($(compgen -W "$commands" -- "$cur"))
+}
+complete -F _clish_completion clish
+EOF
+}

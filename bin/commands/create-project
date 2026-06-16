@@ -1,0 +1,172 @@
+#!/usr/bin/env bash
+# ============================================
+# Command: create-project — Create a new Modulash project
+# ============================================
+
+cmd_create-project_description() {
+    echo "Create a new Modulash project from a package in the registry"
+}
+
+cmd_create-project_options() {
+    clish_argument "package" "Package name (e.g., modkit/clish)"
+    clish_argument "directory" "Project directory name"
+    clish_argument "version" "Version constraint (default: latest)" --optional
+}
+
+cmd_create-project_handle() {
+    # Parse arguments
+    local package="${arg_package:-}"
+    local project_dir="${arg_directory:-}"
+    local version="${arg_version:-latest}"
+
+    if [[ -z "$package" || -z "$project_dir" ]]; then
+        log_error "Missing required arguments."
+        log_info "Usage: create-project <package> <directory> [version]"
+        return 1
+    fi
+
+    log_info "Creating project from package: $package (version: $version)"
+
+    # Check if target directory already exists
+    if [[ -d "$project_dir" ]]; then
+        log_error "Directory already exists: $project_dir"
+        return 1
+    fi
+
+    # Get registry URL from modulash.json (fallback to default)
+    local registry_url
+    if [[ -f "$PROJECT_ROOT/modulash.json" ]]; then
+        registry_url=$(jq -r '.registry.default // "http://localhost:8000/api/packages"' "$PROJECT_ROOT/modulash.json")
+    else
+        registry_url="http://localhost:8000/api/packages"
+    fi
+
+    log_info "Using registry: $registry_url"
+
+    # Create temporary directory for download
+    local tmp_dir
+    tmp_dir="$(mktemp -d)"
+    trap 'rm -rf "$tmp_dir"' RETURN
+
+    # Download package
+    log_info "Downloading package $package@$version ..."
+    if ! _download_package "$package" "$registry_url" "$tmp_dir" "$version"; then
+        log_error "Failed to download package."
+        return 1
+    fi
+
+    # Find extracted package directory (contains modulash.json)
+    local pkg_dir
+    pkg_dir="$(_find_package_dir "$tmp_dir")"
+    if [[ -z "$pkg_dir" ]]; then
+        log_error "No valid package found in downloaded archive."
+        return 1
+    fi
+
+    # Create project directory and copy contents
+    log_info "Creating project in $project_dir ..."
+    mkdir -p "$project_dir"
+    cp -r "$pkg_dir"/* "$project_dir"/ 2>/dev/null || true
+
+    # Reset version to 1.0.0 in the new project's modulash.json
+    if [[ -f "$project_dir/modulash.json" ]]; then
+        _set_project_version "$project_dir/modulash.json" "1.0.0"
+    fi
+
+    # Run install command in the new project
+    cd "$project_dir" || return 1
+    log_info "Running install in $project_dir ..."
+    if ! modulash_run_command install; then
+        log_error "Installation failed."
+        return 1
+    fi
+
+    log_success "Project created successfully: $project_dir"
+    echo ""
+    log_info "Next steps:"
+    echo "  cd $project_dir"
+    echo "  ./bin/modulash"
+}
+
+# Helper: Download package from registry
+_download_package() {
+    local package="$1"
+    local registry="$2"
+    local dest="$3"
+    local version="$4"
+
+    # Get package info
+    local api_url="$registry/$package"
+    local package_info
+    if ! package_info=$(curl -s "$api_url"); then
+        log_error "Failed to fetch package info from $api_url"
+        return 1
+    fi
+
+    # Find matching version
+    local tarball_url
+    if [[ "$version" == "latest" ]]; then
+        tarball_url=$(echo "$package_info" | jq -r '.versions[-1].dist.tarball // ""')
+    else
+        # Simple exact match for now (could add semver matching later)
+        tarball_url=$(echo "$package_info" | jq -r --arg ver "$version" '.versions[] | select(.version == $ver) | .dist.tarball' | head -1)
+    fi
+
+    if [[ -z "$tarball_url" || "$tarball_url" == "null" ]]; then
+        log_error "No matching version found for $version"
+        return 1
+    fi
+
+    # Download and extract tarball
+    local tarball="$dest/package.tar.gz"
+    if ! curl -L -o "$tarball" "$tarball_url"; then
+        log_error "Failed to download tarball from $tarball_url"
+        return 1
+    fi
+
+    tar -xzf "$tarball" -C "$dest" 2>/dev/null
+    if [[ $? -ne 0 ]]; then
+        log_error "Failed to extract tarball"
+        return 1
+    fi
+
+    return 0
+}
+
+# Helper: Find the directory containing modulash.json
+_find_package_dir() {
+    local root="$1"
+    # First try root
+    if [[ -f "$root/modulash.json" ]]; then
+        echo "$root"
+        return 0
+    fi
+    # Look for a subdirectory with modulash.json (usually package-version/)
+    for d in "$root"/*/; do
+        if [[ -f "$d/modulash.json" ]]; then
+            echo "$d"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Helper: Set version in modulash.json
+_set_project_version() {
+    local file="$1"
+    local new_version="$2"
+    if command -v jq >/dev/null 2>&1; then
+        jq --arg v "$new_version" '.version = $v' "$file" > "$file.tmp" && mv "$file.tmp" "$file"
+    elif command -v python3 >/dev/null 2>&1; then
+        python3 -c "
+import json
+with open('$file', 'r') as f:
+    data = json.load(f)
+data['version'] = '$new_version'
+with open('$file', 'w') as f:
+    json.dump(data, f, indent=2)
+"
+    else
+        log_warning "Cannot update version: jq or python3 not available"
+    fi
+}

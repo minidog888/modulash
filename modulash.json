@@ -1,0 +1,29 @@
+{
+  "name": "modkit/demo",
+  "version": "1.0.0",
+  "description": "Modulash",
+  "author": "Your Name",
+  "maintainers": [
+    "<your.email@example.com>"
+  ],
+  "keywords": [
+    "modkit",
+    "modules"
+  ],
+  "dependencies": {
+  },
+  "aliases": {
+    "@": "./",
+    "@cmd": "./bin/commands"
+  },
+  "facade": {
+    "ask": "clish_console_ask"
+  },
+  "devDependencies": [],
+  "optionalDependencies": [],
+  "registry": {
+    "default": "http://localhost:8000/api/packages",
+    "fallback": "./modules",
+    "local": "./modules"
+  }
+}

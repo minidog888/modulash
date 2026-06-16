@@ -1,0 +1,170 @@
+#!/usr/bin/env bash
+# ============================================
+# Command: install — Install Modulash project and dependencies
+# ============================================
+
+cmd_install_description() {
+    echo "Install Modulash project: check environment, download dependencies, initialize"
+}
+
+cmd_install_options() {
+    modulash_option "force" "Force re-install even if already installed"
+}
+
+cmd_install_handle() {
+    local force="${opt_force:-false}"
+    local lock_file="$PROJECT_ROOT/modulash.lock"
+
+    # Check if already installed
+    if [[ -f "$lock_file" && "$force" != "true" ]]; then
+        log_error "Project already installed (modulash.lock exists). Use --force to re-install."
+        return 1
+    fi
+
+    log_info "Starting Modulash installation..."
+
+    # ============================================
+    # Environment check
+    # ============================================
+    check_environment() {
+        log_info "Checking system dependencies..."
+        local -a missing=()
+
+        for cmd in jq git curl tar; do
+            if ! command -v "$cmd" &>/dev/null; then
+                missing+=("$cmd")
+            fi
+        done
+
+        if [[ ${#missing[@]} -gt 0 ]]; then
+            log_warning "Missing dependencies: ${missing[*]}"
+            if confirm "Attempt to install missing dependencies automatically?"; then
+                install_deps "${missing[@]}"
+            else
+                log_error "Please install missing dependencies manually and re-run install."
+                return 1
+            fi
+        else
+            log_success "All system dependencies are present."
+        fi
+    }
+
+    install_deps() {
+        local deps=("$@")
+        local pkg_manager=""
+        if command -v apt-get &>/dev/null; then
+            pkg_manager="apt-get"
+        elif command -v yum &>/dev/null; then
+            pkg_manager="yum"
+        elif command -v dnf &>/dev/null; then
+            pkg_manager="dnf"
+        elif command -v brew &>/dev/null; then
+            pkg_manager="brew"
+        else
+            log_error "No supported package manager found."
+            return 1
+        fi
+        log_info "Using package manager: $pkg_manager"
+
+        for dep in "${deps[@]}"; do
+            case "$pkg_manager" in
+                apt-get)
+                    sudo apt-get update
+                    sudo apt-get install -y "$dep"
+                    ;;
+                yum|dnf)
+                    sudo "$pkg_manager" install -y "$dep"
+                    ;;
+                brew)
+                    brew install "$dep"
+                    ;;
+            esac
+            if [[ $? -eq 0 ]]; then
+                log_success "Installed: $dep"
+            else
+                log_error "Failed to install: $dep"
+                return 1
+            fi
+        done
+    }
+
+    check_environment || return 1
+
+    # ============================================
+    # Validate modulash.json
+    # ============================================
+    if [[ ! -f "$PROJECT_ROOT/modulash.json" ]]; then
+        log_error "modulash.json not found in current directory."
+        return 1
+    fi
+    log_success "Found modulash.json"
+
+    # ============================================
+    # Install dependencies from modulash.json
+    # ============================================
+    install_dependencies() {
+        log_info "Installing project dependencies from modulash.json..."
+        # Use modulash require if available, else simulate
+        if declare -f modulash_require >/dev/null; then
+            modulash_require
+        else
+            # Simple dependency resolution: read 'dependencies' object
+            local deps_json
+            deps_json=$(jq -r '.dependencies // {}' "$PROJECT_ROOT/modulash.json")
+            local dep_count
+            dep_count=$(echo "$deps_json" | jq 'length')
+            if [[ "$dep_count" -eq 0 ]]; then
+                log_info "No dependencies defined."
+                return 0
+            fi
+            # For each dependency, clone/install from git or other sources
+            # This is a placeholder; actual implementation depends on your module registry
+            log_warning "Automatic dependency installation not fully implemented. Please run 'modulash require <package>' manually."
+        fi
+    }
+
+    install_dependencies
+
+    # ============================================
+    # Create directory structure
+    # ============================================
+    create_directories() {
+        log_info "Creating directory structure..."
+        mkdir -p "$PROJECT_ROOT/vendor"
+        mkdir -p "$PROJECT_ROOT/generated"
+        mkdir -p "$PROJECT_ROOT/bin/commands"
+        mkdir -p "$PROJECT_ROOT/lib/core"
+        mkdir -p "$PROJECT_ROOT/lib/console"
+        log_success "Directories created."
+    }
+    create_directories
+
+    # ============================================
+    # Generate initial autoload aliases
+    # ============================================
+    generate_autoload() {
+        if [[ -f "$PROJECT_ROOT/bin/commands/dump-autoload" ]]; then
+            log_info "Generating autoload aliases..."
+            "$PROJECT_ROOT/bin/commands/dump-autoload"
+        else
+            log_warning "dump-autoload command not found; skipping alias generation."
+        fi
+    }
+    generate_autoload
+
+    # ============================================
+    # Create lock file
+    # ============================================
+    touch "$lock_file"
+    log_success "Installation completed successfully."
+
+    # ============================================
+    # Next steps
+    # ============================================
+    echo ""
+    log_info "Next steps:"
+    echo "  - Run './bin/modulash' to see available commands"
+    echo "  - Use './bin/modulash build' to package your application"
+    echo "  - Add new commands in bin/commands/"
+    echo ""
+}

@@ -1,0 +1,19 @@
+{
+  "entry": "./bin/clish",
+  "include_dirs": [
+    "lib",
+    "bin/commands",
+    "vendor"
+  ],
+  "include_files": [
+      "bootstrap.sh"
+  ],
+  "exclude_patterns": [
+    "*.log",
+    "*.json",
+    "*.tmp",
+    "lib/helpers.sh"
+  ],
+  "output": "./dist/modulash",
+  "force": false
+}

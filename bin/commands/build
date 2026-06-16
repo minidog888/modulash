@@ -1,0 +1,227 @@
+#!/usr/bin/env bash
+# ============================================
+# Command: build — Package Clish project
+# ============================================
+
+cmd_build_description() {
+    echo "Package Clish project by recursively including script files"
+}
+
+cmd_build_options() {
+    clish_console_core_options_option "force" "Overwrite existing output file"
+    clish_console_core_options_option "output" "Output file path (default: ./dist/modulash)" --arg
+    clish_console_core_options_option "config" "Configuration file (default: clish.build.json)" --arg
+    clish_console_core_options_option "exclude" "Additional exclude pattern" --arg
+    clish_console_core_options_option "verbose" "Show detailed output"
+    clish_console_core_options_option "enable-debug" "Include --debug option in the built script"
+}
+
+#!/usr/bin/env bash
+# ============================================
+# Command: build — Package Clish project
+# ============================================
+
+cmd_build_description() {
+    echo "Package Clish project by recursively including script files"
+}
+
+cmd_build_options() {
+    clish_console_core_options_option "force" "Overwrite existing output file"
+    clish_console_core_options_option "output" "Output file path (default: ./dist/modulash)" --arg
+    clish_console_core_options_option "config" "Configuration file (default: clish.build.json)" --arg
+    clish_console_core_options_option "exclude" "Additional exclude pattern" --arg
+    clish_console_core_options_option "verbose" "Show detailed output"
+    clish_console_core_options_option "enable-debug" "Include --debug option in the built script"
+}
+
+cmd_build_handle() {
+    local output="${opt_output:-./dist/modulash}"
+    local force="${opt_force:-false}"
+    local verbose="${opt_verbose:-false}"
+    local enable_debug="${opt_enable_debug:-false}"
+    local config_file="${opt_config:-clish.build.json}"
+
+    local entry=""
+    local -a include_dirs=()
+    local -a exclude_patterns=()
+    local config_force=false
+
+    if [[ -f "$config_file" ]]; then
+        entry=$(jq -r '.entry // ""' "$config_file")
+        output=$(jq -r '.output // "./dist/modulash"' "$config_file")
+        config_force=$(jq -r '.force // false' "$config_file")
+        while IFS= read -r dir; do
+            [[ -n "$dir" ]] && include_dirs+=("$dir")
+        done < <(jq -r '.include_dirs[]' "$config_file" 2>/dev/null || true)
+        while IFS= read -r pat; do
+            [[ -n "$pat" ]] && exclude_patterns+=("$pat")
+        done < <(jq -r '.exclude_patterns[]' "$config_file" 2>/dev/null || true)
+    else
+        clish_console_core_log_error "Configuration file '$config_file' not found."
+        return 1
+    fi
+
+    [[ -n "$opt_output" ]] && output="$opt_output"
+    [[ "$opt_force" == "true" ]] && force=true
+    [[ -n "$opt_exclude" ]] && exclude_patterns+=("$opt_exclude")
+    [[ "$force" == "false" && "$config_force" == "true" ]] && force=true
+
+    if [[ -z "$entry" ]]; then
+        clish_console_core_log_error "No entry point specified."
+        return 1
+    fi
+
+    entry=$(realpath "$entry" 2>/dev/null || echo "$CLISH_CONSOLE_WORK_DIR/$entry")
+    if [[ ! -f "$entry" ]]; then
+        clish_console_core_log_error "Entry file not found: $entry"
+        return 1
+    fi
+
+    if [[ -f "$output" && "$force" != "true" ]]; then
+        clish_console_core_log_error "Output file '$output' exists. Use --force to overwrite."
+        return 1
+    fi
+
+    mkdir -p "$(dirname "$output")"
+    if [[ "$verbose" == "true" ]]; then
+        clish_console_core_log_info "Building $entry into $output ... (debug: $([[ "$enable_debug" == "true" ]] && echo "enabled" || echo "disabled"))"
+    else
+        echo "[INFO] Building Modulash into $output ..." >&2
+    fi
+
+    # Collect all script files
+    all_files=()
+    seen=()
+
+    _is_excluded() {
+        local file="$1"
+        local rel="${file#$CLISH_CONSOLE_WORK_DIR/}"
+        for pat in "${exclude_patterns[@]}"; do
+            if [[ "$rel" == $pat ]]; then
+                return 0
+            fi
+        done
+        return 1
+    }
+
+    _is_script() {
+        local file="$1"
+        [[ "$file" == *.sh || "$file" == *.bash ]] && return 0
+        local first_line
+        IFS= read -r first_line < "$file" 2>/dev/null
+        [[ "$first_line" == "#!"* ]] && return 0
+        if [[ -x "$file" ]] && command -v file >/dev/null 2>&1; then
+            file -b "$file" | grep -q "text" && return 0
+        fi
+        return 1
+    }
+
+    _add_file() {
+        local file="$1"
+        for seen_file in "${seen[@]}"; do
+            [[ "$seen_file" == "$file" ]] && return
+        done
+        seen+=("$file")
+        all_files+=("$file")
+    }
+
+    _collect_dir() {
+        local dir="$1"
+        if [[ ! -d "$dir" ]]; then
+            if [[ "$verbose" == "true" ]]; then
+                clish_console_core_log_warning "Directory not found: $dir"
+            fi
+            return
+        fi
+        while IFS= read -r file; do
+            if [[ -f "$file" ]]; then
+                if _is_excluded "$file"; then
+                    if [[ "$verbose" == "true" ]]; then
+                        echo "[DEBUG] Excluded: $file" >&2
+                    fi
+                    continue
+                fi
+                if _is_script "$file"; then
+                    _add_file "$file"
+                    if [[ "$verbose" == "true" ]]; then
+                        echo "[DEBUG] Added: $file" >&2
+                    fi
+                else
+                    if [[ "$verbose" == "true" ]]; then
+                        echo "[DEBUG] Skipping non-script: $file" >&2
+                    fi
+                fi
+            fi
+        done < <(find "$dir" -type f | sort)
+    }
+
+    for dir in "${include_dirs[@]}"; do
+        if [[ "$dir" = /* ]]; then
+            abs_dir="$dir"
+        else
+            abs_dir="$CLISH_CONSOLE_WORK_DIR/$dir"
+        fi
+        _collect_dir "$abs_dir"
+    done
+    _add_file "$entry"
+
+    if [[ "$verbose" == "true" ]]; then
+        echo "[INFO] Collected ${#all_files[@]} files" >&2
+    else
+        echo "[INFO] Collected ${#all_files[@]} files" >&2
+    fi
+
+    # Create a temporary file to merge all content
+    local tmp_merged=$(mktemp)
+    trap 'rm -f "$tmp_merged"' RETURN
+
+    # Merge all files into temporary file, adding newline separators
+    for src in "${all_files[@]}"; do
+        echo >> "$tmp_merged"  # ensure newline before each file
+        cat "$src" >> "$tmp_merged"
+    done
+
+    # Generate final script
+    {
+        echo '#!/usr/bin/env bash'
+        echo '# ============================================'
+        echo '# Modulash Packaged Build (DO NOT EDIT)'
+        echo '# ============================================'
+        echo 'set -eo pipefail'
+        echo ''
+
+        # Apply filters to the merged content
+        # Remove shebang, import, source, readonly, and optionally comment lines
+        if [[ "$enable_debug" == "true" ]]; then
+            echo 'export CLISH_CONSOLE_PACKAGED=true'
+        else
+            echo 'export CLISH_CONSOLE_PACKAGED=true'
+            echo 'export CLISH_CONSOLE_CLOSE_DEBUG_ENABLED=true'
+        fi
+
+        # Now output filtered content
+        sed -E '/^#!.*bash/d' "$tmp_merged" \
+            | sed -E '/^[[:space:]]*(import|source)[[:space:]]+/d' \
+            | sed 's/\breadonly\b//g' \
+            | sed -E '/^[[:space:]]*$/d'   # also remove blank lines for smaller size
+    } > "$output"
+
+    # Ensure final newline
+    echo >> "$output"
+    chmod +x "$output"
+
+    # Syntax check
+    if ! bash -n "$output" 2>/dev/null; then
+        echo "[ERROR] Generated script has syntax errors. Please check the output." >&2
+        bash -n "$output"  # Show detailed error
+        return 1
+    fi
+
+    if [[ "$verbose" == "true" ]]; then
+        clish_console_core_log_success "Build completed: $output"
+        clish_console_core_log_info "Size: $(du -h "$output" | cut -f1)"
+    else
+        echo "[SUCCESS] Build completed: $output" >&2
+        echo "[INFO] Size: $(du -h "$output" | cut -f1)" >&2
+    fi
+}

@@ -1,0 +1,16 @@
+# 配置文件
+install.lock
+
+# 环境变量
+**/.env
+**/*.env
+
+/vendor
+
+/dist
+
+/.codebuddy
+/.trae
+
+/.modkit
+/.qoder
