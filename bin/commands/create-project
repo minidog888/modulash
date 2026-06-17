@@ -3,145 +3,277 @@
 # Command: create-project — Create a new Modulash project
 # ============================================
 
+# Load generator functions (if available)
+import "@/lib/generator.sh" 2>/dev/null || true
+
 cmd_create-project_description() {
     echo "Create a new Modulash project from a package in the registry"
 }
 
 cmd_create-project_options() {
-    clish_argument "package" "Package name (e.g., modkit/clish)"
-    clish_argument "directory" "Project directory name"
-    clish_argument "version" "Version constraint (default: latest)" --optional
+    clish_console_core_options_argument "package" "Package name (e.g., modkit/clish)"
+    clish_console_core_options_argument "directory" "Project directory name"
+    clish_console_core_options_argument "version" "Version constraint (default: latest)" --optional
 }
 
 cmd_create-project_handle() {
-    # Parse arguments
     local package="${arg_package:-}"
     local project_dir="${arg_directory:-}"
     local version="${arg_version:-latest}"
 
     if [[ -z "$package" || -z "$project_dir" ]]; then
-        log_error "Missing required arguments."
-        log_info "Usage: create-project <package> <directory> [version]"
+        clish_console_core_log_error "Missing required arguments."
+        clish_console_core_log_info "Usage: create-project <package> <directory> [version]"
         return 1
     fi
 
-    log_info "Creating project from package: $package (version: $version)"
+    clish_console_core_log_info "Creating project from package: $package (version: $version)"
 
-    # Check if target directory already exists
     if [[ -d "$project_dir" ]]; then
-        log_error "Directory already exists: $project_dir"
+        clish_console_core_log_error "Directory already exists: $project_dir"
         return 1
     fi
 
-    # Get registry URL from modulash.json (fallback to default)
     local registry_url
     if [[ -f "$PROJECT_ROOT/modulash.json" ]]; then
         registry_url=$(jq -r '.registry.default // "http://localhost:8000/api/packages"' "$PROJECT_ROOT/modulash.json")
     else
         registry_url="http://localhost:8000/api/packages"
     fi
+    clish_console_core_log_info "Using registry: $registry_url"
 
-    log_info "Using registry: $registry_url"
+    for tool in curl jq tar; do
+        if ! command -v "$tool" >/dev/null 2>&1; then
+            clish_console_core_log_error "Required tool '$tool' is not installed."
+            return 1
+        fi
+    done
 
-    # Create temporary directory for download
     local tmp_dir
     tmp_dir="$(mktemp -d)"
     trap 'rm -rf "$tmp_dir"' RETURN
 
-    # Download package
-    log_info "Downloading package $package@$version ..."
-    if ! _download_package "$package" "$registry_url" "$tmp_dir" "$version"; then
-        log_error "Failed to download package."
-        return 1
-    fi
-
-    # Find extracted package directory (contains modulash.json)
+    clish_console_core_log_info "Downloading package $package@$version ..."
     local pkg_dir
-    pkg_dir="$(_find_package_dir "$tmp_dir")"
-    if [[ -z "$pkg_dir" ]]; then
-        log_error "No valid package found in downloaded archive."
+    if ! pkg_dir="$(_download_package "$package" "$registry_url" "$tmp_dir" "$version")"; then
+        clish_console_core_log_error "Failed to download package."
         return 1
     fi
 
-    # Create project directory and copy contents
-    log_info "Creating project in $project_dir ..."
+    if [[ -z "$pkg_dir" || ! -d "$pkg_dir" ]]; then
+        clish_console_core_log_error "No valid package found in downloaded archive."
+        return 1
+    fi
+
+    clish_console_core_log_info "Creating project in $project_dir ..."
     mkdir -p "$project_dir"
     cp -r "$pkg_dir"/* "$project_dir"/ 2>/dev/null || true
 
-    # Reset version to 1.0.0 in the new project's modulash.json
     if [[ -f "$project_dir/modulash.json" ]]; then
         _set_project_version "$project_dir/modulash.json" "1.0.0"
     fi
 
-    # Run install command in the new project
     cd "$project_dir" || return 1
-    log_info "Running install in $project_dir ..."
-    if ! modulash_run_command install; then
-        log_error "Installation failed."
-        return 1
+    # 不再设置 PROJECT_ROOT
+
+    # Generate core bootstrap files (pass PWD as argument)
+    if declare -f generate_core >/dev/null; then
+        clish_console_core_log_info "Generating bootstrap files..."
+        generate_core "$PWD"
+    else
+        clish_console_core_log_warning "generate_core not available; falling back to manual generation."
+        _manual_generate_aliases "$PWD"
     fi
 
-    log_success "Project created successfully: $project_dir"
+    # Sync dependencies (if module library loaded)
+    if declare -f module_sync_modules >/dev/null; then
+        clish_console_core_log_info "Syncing dependencies..."
+        (cd "$PWD" && module_sync_modules) || clish_console_core_log_warning "Dependency sync failed."
+    fi
+
+    clish_console_core_log_success "Project created successfully: $project_dir"
     echo ""
-    log_info "Next steps:"
+    clish_console_core_log_info "Next steps:"
     echo "  cd $project_dir"
-    echo "  ./bin/modulash"
+    echo "  ./bin/modulash  (or modkit commands)"
 }
 
-# Helper: Download package from registry
+# ----------------------------------------------------------------------
+# Fallback manual alias generation if generator functions unavailable
+# ----------------------------------------------------------------------
+_manual_generate_aliases() {
+    local target_dir="$1"
+    local config_file="$target_dir/modulash.json"
+    if [[ ! -f "$config_file" ]]; then
+        echo "Warning: $config_file not found, skipping alias generation." >&2
+        return 1
+    fi
+    local aliases_json
+    aliases_json=$(jq -r '.aliases // {}' "$config_file" 2>/dev/null || echo "{}")
+    local alias_list=""
+    local path_list=""
+    if [[ "$aliases_json" != "{}" ]]; then
+        local keys
+        keys=$(echo "$aliases_json" | jq -r 'keys[]' 2>/dev/null)
+        for key in $keys; do
+            local value
+            value=$(echo "$aliases_json" | jq -r ".\"$key\"" 2>/dev/null)
+            alias_list="$alias_list\n    \"$key\""
+            path_list="$path_list\n    \"$value\""
+        done
+    fi
+    mkdir -p "$target_dir/vendor/modulash"
+    cat > "$target_dir/vendor/modulash/aliases.sh" <<EOF
+#!/bin/bash
+# Modulash Aliases - Generated manually
+
+__MODULASH_ALIASES=(
+$alias_list
+)
+
+__MODULASH_PATHS=(
+$path_list
+)
+EOF
+    chmod +x "$target_dir/vendor/modulash/aliases.sh"
+    echo "Manually generated aliases.sh" >&2
+}
+
+# ----------------------------------------------------------------------
+# Helper: Download package from registry (debug only with -vvv, but here we keep)
+# ----------------------------------------------------------------------
 _download_package() {
     local package="$1"
     local registry="$2"
     local dest="$3"
     local version="$4"
 
-    # Get package info
     local api_url="$registry/$package"
+    if [[ "${CLISH_CONSOLE_BOOTSTRAP_VERBOSE:-0}" -ge 3 ]]; then
+        echo "[DEBUG] Fetching package info from: $api_url" >&2
+    fi
+
     local package_info
     if ! package_info=$(curl -s "$api_url"); then
-        log_error "Failed to fetch package info from $api_url"
+        echo "[ERROR] Failed to fetch package info from $api_url" >&2
         return 1
     fi
 
-    # Find matching version
-    local tarball_url
-    if [[ "$version" == "latest" ]]; then
-        tarball_url=$(echo "$package_info" | jq -r '.versions[-1].dist.tarball // ""')
-    else
-        # Simple exact match for now (could add semver matching later)
-        tarball_url=$(echo "$package_info" | jq -r --arg ver "$version" '.versions[] | select(.version == $ver) | .dist.tarball' | head -1)
+    if [[ "${CLISH_CONSOLE_BOOTSTRAP_VERBOSE:-0}" -ge 3 ]]; then
+        echo "[DEBUG] Received response (first 200 chars): ${package_info:0:200}..." >&2
     fi
+
+    if ! echo "$package_info" | jq -e . >/dev/null 2>&1; then
+        echo "[ERROR] Invalid JSON response from registry." >&2
+        echo "$package_info" | head -c 500 >&2
+        return 1
+    fi
+
+    local versions_type
+    versions_type=$(echo "$package_info" | jq -r 'if .versions | type == "array" then "array" else "unknown" end')
+    if [[ "$versions_type" != "array" ]]; then
+        echo "[ERROR] Registry response: 'versions' field is not an array." >&2
+        return 1
+    fi
+
+    _get_download_url() {
+        echo "$1" | jq -r '.download_url // ""'
+    }
+    _get_version_str() {
+        echo "$1" | jq -r '.version'
+    }
+    _list_versions() {
+        echo "$package_info" | jq -r '.versions[].version'
+    }
+
+    local tarball_url=""
+    local found_version=""
+
+    if [[ "${CLISH_CONSOLE_BOOTSTRAP_VERBOSE:-0}" -ge 3 ]]; then
+        echo "[DEBUG] Searching for version constraint: $version" >&2
+    fi
+
+    if [[ "$version" == "latest" ]]; then
+        local latest_entry=$(echo "$package_info" | jq -r '.versions[-1]')
+        tarball_url=$(_get_download_url "$latest_entry")
+        found_version=$(_get_version_str "$latest_entry")
+        [[ "${CLISH_CONSOLE_BOOTSTRAP_VERBOSE:-0}" -ge 3 ]] && echo "[DEBUG] Latest version entry: $latest_entry" >&2
+    elif [[ "$version" == *"*"* ]]; then
+        local prefix="${version%\*}"
+        [[ "${CLISH_CONSOLE_BOOTSTRAP_VERBOSE:-0}" -ge 3 ]] && echo "[DEBUG] Wildcard prefix: $prefix" >&2
+        local matches=$(echo "$package_info" | jq -r --arg prefix "$prefix" '[.versions[] | select(.version | startswith($prefix))]')
+        [[ "${CLISH_CONSOLE_BOOTSTRAP_VERBOSE:-0}" -ge 3 ]] && echo "[DEBUG] Matched versions: $matches" >&2
+        if [[ "$matches" != "[]" ]]; then
+            local last_entry=$(echo "$matches" | jq -r 'last')
+            tarball_url=$(_get_download_url "$last_entry")
+            found_version=$(_get_version_str "$last_entry")
+            [[ "${CLISH_CONSOLE_BOOTSTRAP_VERBOSE:-0}" -ge 3 ]] && echo "[DEBUG] Selected version: $found_version" >&2
+        fi
+    else
+        [[ "${CLISH_CONSOLE_BOOTSTRAP_VERBOSE:-0}" -ge 3 ]] && echo "[DEBUG] Exact version match: $version" >&2
+        local entry=$(echo "$package_info" | jq -r --arg ver "$version" '.versions[] | select(.version == $ver)')
+        if [[ -n "$entry" && "$entry" != "null" ]]; then
+            tarball_url=$(_get_download_url "$entry")
+            found_version="$version"
+            [[ "${CLISH_CONSOLE_BOOTSTRAP_VERBOSE:-0}" -ge 3 ]] && echo "[DEBUG] Version entry found: $entry" >&2
+        fi
+    fi
+
+    if [[ -z "$found_version" ]]; then
+        echo "[ERROR] No matching version found for '$version'." >&2
+        local avail_versions=$(_list_versions | tr '\n' ' ')
+        echo "[INFO] Available versions: $avail_versions" >&2
+        return 1
+    fi
+
+    echo "[INFO] Selected version: $found_version" >&2
 
     if [[ -z "$tarball_url" || "$tarball_url" == "null" ]]; then
-        log_error "No matching version found for $version"
-        return 1
+        tarball_url="$registry/$package/download/$found_version"
+        echo "[WARNING] download_url missing; using constructed URL: $tarball_url" >&2
+    else
+        [[ "${CLISH_CONSOLE_BOOTSTRAP_VERBOSE:-0}" -ge 3 ]] && echo "[DEBUG] Original download_url: $tarball_url" >&2
     fi
 
-    # Download and extract tarball
     local tarball="$dest/package.tar.gz"
+    echo "[INFO] Downloading $tarball_url ..." >&2
     if ! curl -L -o "$tarball" "$tarball_url"; then
-        log_error "Failed to download tarball from $tarball_url"
+        echo "[ERROR] Failed to download tarball from $tarball_url" >&2
         return 1
     fi
 
-    tar -xzf "$tarball" -C "$dest" 2>/dev/null
-    if [[ $? -ne 0 ]]; then
-        log_error "Failed to extract tarball"
+    if [[ "${CLISH_CONSOLE_BOOTSTRAP_VERBOSE:-0}" -ge 3 ]]; then
+        echo "[DEBUG] Downloaded tarball size: $(stat -f%z "$tarball" 2>/dev/null || stat -c%s "$tarball" 2>/dev/null) bytes" >&2
+    fi
+
+    if ! tar -xzf "$tarball" -C "$dest" 2>/dev/null; then
+        echo "[ERROR] Failed to extract tarball" >&2
         return 1
     fi
 
-    return 0
+    if [[ "${CLISH_CONSOLE_BOOTSTRAP_VERBOSE:-0}" -ge 3 ]]; then
+        echo "[DEBUG] Extracted contents of $dest:" >&2
+        ls -la "$dest" >&2
+    fi
+
+    local pkg_dir
+    pkg_dir="$(_find_package_dir "$dest")"
+    if [[ -n "$pkg_dir" ]]; then
+        [[ "${CLISH_CONSOLE_BOOTSTRAP_VERBOSE:-0}" -ge 3 ]] && echo "[DEBUG] Package directory found: $pkg_dir" >&2
+        echo "$pkg_dir"
+        return 0
+    else
+        echo "[ERROR] Could not find modulash.json in extracted contents" >&2
+        return 1
+    fi
 }
 
-# Helper: Find the directory containing modulash.json
 _find_package_dir() {
     local root="$1"
-    # First try root
     if [[ -f "$root/modulash.json" ]]; then
         echo "$root"
         return 0
     fi
-    # Look for a subdirectory with modulash.json (usually package-version/)
     for d in "$root"/*/; do
         if [[ -f "$d/modulash.json" ]]; then
             echo "$d"
@@ -151,7 +283,6 @@ _find_package_dir() {
     return 1
 }
 
-# Helper: Set version in modulash.json
 _set_project_version() {
     local file="$1"
     local new_version="$2"
@@ -167,6 +298,6 @@ with open('$file', 'w') as f:
     json.dump(data, f, indent=2)
 "
     else
-        log_warning "Cannot update version: jq or python3 not available"
+        clish_console_core_log_warning "Cannot update version: jq or python3 not available"
     fi
 }

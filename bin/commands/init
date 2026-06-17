@@ -1,3 +1,7 @@
+cmd_init_description() {
+    echo "Initialize a new Modulash project in the current directory"
+}
+
 cmd_init_handle() {
     # shellcheck source=/dev/null
     import "@/lib/generator.sh"

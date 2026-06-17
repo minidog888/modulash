@@ -13,76 +13,76 @@ SCRIPT_DIR="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 ${sour}ce "\$SCRIPT_DIR/modulash/modulash.sh"
 EOF
-
     chmod +x "$target_dir/autoload.sh"
 }
 
 # Generate vendor/modulash/modulash.sh
 generate_modulash() {
-    local target_dir="$1"   # vendor/modulash/
-    cat > "$target_dir/modulash.sh" <<'EOF'
+    local target_dir="$1"
+    local sour="sour"
+    cat > "$target_dir/modulash.sh" <<EOF
 #!/bin/bash
 # Modulash Autoload - DO NOT EDIT
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
-source "$SCRIPT_DIR/aliases.sh"
+${sour}ce "\$SCRIPT_DIR/aliases.sh"
 
 _modulash_resolve() {
-    local spec="$1"
+    local spec="\$1"
     # Remove quotes
-    spec="${spec#\"}"; spec="${spec%\"}"
-    spec="${spec#\'}"; spec="${spec%\'}"
+    spec="\${spec#\"}"; spec="\${spec%\"}"
+    spec="\${spec#\'}"; spec="\${spec%\'}"
     
-    if [[ "$spec" == @* ]]; then
+    if [[ "\$spec" == @* ]]; then
         # Try longest matching alias
         local best_alias=""
         local best_path=""
         local rest=""
-        for i in "${!__MODULASH_ALIASES[@]}"; do
-            local alias="${__MODULASH_ALIASES[$i]}"
+        for i in "\${!__MODULASH_ALIASES[@]}"; do
+            local alias="\${__MODULASH_ALIASES[\$i]}"
             # If spec starts with alias (and alias is followed by '/' or end)
-            if [[ "$spec" == "$alias"/* ]] || [[ "$spec" == "$alias" ]]; then
+            if [[ "\$spec" == "\$alias"/* ]] || [[ "\$spec" == "\$alias" ]]; then
                 # Choose the longest alias
-                if [[ ${#alias} -gt ${#best_alias} ]]; then
-                    best_alias="$alias"
-                    best_path="${__MODULASH_PATHS[$i]}"
+                if [[ \${#alias} -gt \${#best_alias} ]]; then
+                    best_alias="\$alias"
+                    best_path="\${__MODULASH_PATHS[\$i]}"
                 fi
             fi
         done
-        if [[ -n "$best_alias" ]]; then
+        if [[ -n "\$best_alias" ]]; then
             # Extract remaining part
-            if [[ "$spec" == "$best_alias" ]]; then
+            if [[ "\$spec" == "\$best_alias" ]]; then
                 rest=""
             else
                 # shellcheck disable=SC2295
-                rest="${spec#"$best_alias"/}"
+                rest="\${spec#"\$best_alias"/}"
             fi
             # Ensure path ends with /
-            [[ "$best_path" != */ ]] && best_path="$best_path/"
-            echo "${best_path}${rest}"
+            [[ "\$best_path" != */ ]] && best_path="\$best_path/"
+            echo "\${best_path}\${rest}"
             return 0
         else
-            echo "Error: unknown alias (${spec%%/*})" >&2
+            echo "Error: unknown alias (\${spec%%/*})" >&2
             return 1
         fi
     else
         # Relative path, based on caller's directory
         local caller_dir
-        caller_dir="$(cd "$(dirname "${BASH_SOURCE[1]}")" && pwd)"
-        echo "$caller_dir/$spec"
+        caller_dir="\$(cd "\$(dirname "\${BASH_SOURCE[1]}")" && pwd)"
+        echo "\$caller_dir/\$spec"
         return 0
     fi
 }
 
 import() {
     local file
-    file="$(_modulash_resolve "$1")" || return $?
-    if [[ ! -f "$file" ]]; then
-        echo "Module not found: $1 -> $file" >&2
+    file="\$(_modulash_resolve "\$1")" || return \$?
+    if [[ ! -f "\$file" ]]; then
+        echo "Module not found: \$1 -> \$file" >&2
         return 1
     fi
     # shellcheck source=/dev/null
-    source "$file"
+    ${sour}ce "\$file"
 }
 
 export -f import _modulash_resolve 2>/dev/null || true
