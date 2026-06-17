@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# ============================================
+# Command: update — Update project dependencies
+# ============================================
+
+import "@/lib/module.sh" 2>/dev/null || true
+
+cmd_update_description() {
+    echo "Update project dependencies to the latest compatible versions"
+}
+
+cmd_update_options() {
+    clish_console_core_options_option "dry-run" "Preview updates without actually downloading"
+    clish_console_core_options_option "force" "Force re-install even if already up-to-date"
+}
+
+cmd_update_handle() {
+    local dry_run="${opt_dry_run:-false}"
+    local force="${opt_force:-false}"
+
+    if [[ "$dry_run" == "true" ]]; then
+        clish_console_core_log_info "Dry-run mode: checking for available updates..."
+        clish_console_core_log_info "Dry-run not fully implemented; use --force to actually update."
+        return 0
+    fi
+
+    clish_console_core_log_info "Updating project dependencies..."
+
+    if declare -f module_update_all >/dev/null; then
+        # Use current working directory ($PWD) instead of PROJECT_ROOT
+        (cd "$PWD" && module_update_all "$force") || {
+            clish_console_core_log_error "Update failed."
+            return 1
+        }
+    else
+        clish_console_core_log_error "module_update_all not available; please update lib/module.sh."
+        return 1
+    fi
+
+    clish_console_core_log_success "Update completed successfully."
+    return 0
+}
