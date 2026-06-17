@@ -105,10 +105,6 @@ cmd_create-project_handle() {
     fi
 
     clish_console_core_log_success "Project created successfully: $project_dir"
-    echo ""
-    clish_console_core_log_info "Next steps:"
-    echo "  cd $project_dir"
-    echo "  ./bin/modulash  (or modkit commands)"
 }
 
 # ----------------------------------------------------------------------

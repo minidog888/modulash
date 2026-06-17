@@ -4,25 +4,7 @@
 # ============================================
 
 cmd_build_description() {
-    echo "Package Clish project by recursively including script files"
-}
-
-cmd_build_options() {
-    clish_console_core_options_option "force" "Overwrite existing output file"
-    clish_console_core_options_option "output" "Output file path (default: ./dist/modulash)" --arg
-    clish_console_core_options_option "config" "Configuration file (default: clish.build.json)" --arg
-    clish_console_core_options_option "exclude" "Additional exclude pattern" --arg
-    clish_console_core_options_option "verbose" "Show detailed output"
-    clish_console_core_options_option "enable-debug" "Include --debug option in the built script"
-}
-
-#!/usr/bin/env bash
-# ============================================
-# Command: build — Package Clish project
-# ============================================
-
-cmd_build_description() {
-    echo "Package Clish project by recursively including script files"
+    echo "Package Modulash project by recursively including script files"
 }
 
 cmd_build_options() {
@@ -39,7 +21,7 @@ cmd_build_handle() {
     local force="${opt_force:-false}"
     local verbose="${opt_verbose:-false}"
     local enable_debug="${opt_enable_debug:-false}"
-    local config_file="${opt_config:-clish.build.json}"
+    local config_file="${opt_config:-modulash.build.json}"
 
     local entry=""
     local -a include_dirs=()

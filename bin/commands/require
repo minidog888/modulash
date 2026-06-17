@@ -1,0 +1,148 @@
+#!/usr/bin/env bash
+# ============================================
+# Command: require — Add and install a dependency
+# ============================================
+
+import "@/lib/module.sh" 2>/dev/null || true
+
+cmd_require_description() {
+    echo "Add a dependency to modulash.json and install it"
+}
+
+cmd_require_options() {
+    clish_console_core_options_argument "package" "Package name (vendor/name)"
+    clish_console_core_options_argument "version" "Version constraint (default: latest stable)" --optional
+    clish_console_core_options_option "dev" "Add to devDependencies instead of dependencies"
+    clish_console_core_options_option "dry-run" "Preview changes without installing"
+}
+
+cmd_require_handle() {
+    local package="${arg_package:-}"
+    local version="${arg_version:-}"
+    local dev="${opt_dev:-false}"
+    local dry_run="${opt_dry_run:-false}"
+
+    if [[ -z "$package" ]]; then
+        clish_console_core_log_error "Package name is required."
+        return 1
+    fi
+
+    # 验证包名格式
+    if [[ ! "$package" =~ ^[a-z0-9_-]+/[a-z0-9_-]+$ ]]; then
+        clish_console_core_log_error "Invalid package name format. Expected vendor/name"
+        return 1
+    fi
+
+    # 检查 modulash.json 是否存在
+    local config_file="$PWD/modulash.json"
+    if [[ ! -f "$config_file" ]]; then
+        clish_console_core_log_error "modulash.json not found. Run 'modulash init' first."
+        return 1
+    fi
+
+    # 检查必需工具
+    for cmd in jq curl; do
+        if ! command -v "$cmd" >/dev/null 2>&1; then
+            clish_console_core_log_error "Required tool '$cmd' is not installed."
+            return 1
+        fi
+    done
+
+    # 获取 registry URL
+    local registry_url
+    registry_url="$(module_get_registry_url)"
+    if [[ -z "$registry_url" ]]; then
+        clish_console_core_log_error "No registry URL configured."
+        return 1
+    fi
+
+    # 查询包信息
+    local api_url="$registry_url/$package"
+    clish_console_core_log_info "Fetching package info from $api_url ..."
+    local package_info
+    if ! package_info=$(curl -s "$api_url"); then
+        clish_console_core_log_error "Failed to fetch package info from $api_url"
+        return 1
+    fi
+    if ! echo "$package_info" | jq -e . >/dev/null 2>&1; then
+        clish_console_core_log_error "Invalid JSON response from registry"
+        return 1
+    fi
+
+    # 获取所有版本并排序
+    local versions
+    versions=($(echo "$package_info" | jq -r '.versions[].version' | sort -V))
+    if [[ ${#versions[@]} -eq 0 ]]; then
+        clish_console_core_log_error "No versions available for $package"
+        return 1
+    fi
+
+    # 确定版本约束
+    local constraint="$version"
+    if [[ -z "$constraint" ]]; then
+        # 默认使用 ^ 最新稳定版（取 versions 最后一项）
+        constraint="^${versions[-1]}"
+        clish_console_core_log_info "No version specified, using latest: $constraint"
+    fi
+
+    # 解析匹配版本
+    local matched_version
+    matched_version="$(module_match_version "$constraint" "${versions[@]}")"
+    if [[ -z "$matched_version" ]]; then
+        clish_console_core_log_error "No version matches constraint '$constraint' for $package"
+        clish_console_core_log_info "Available versions: ${versions[*]}"
+        return 1
+    fi
+    clish_console_core_log_info "Selected version: $matched_version"
+
+    # 确定依赖类型
+    local dep_type="dependencies"
+    if [[ "$dev" == "true" ]]; then
+        dep_type="devDependencies"
+    fi
+
+    # 检查是否已存在
+    local existing_version
+    existing_version="$(jq -r ".$dep_type.\"$package\" // \"\"" "$config_file")"
+    if [[ -n "$existing_version" ]]; then
+        clish_console_core_log_info "Package already exists in $dep_type with version $existing_version. Updating to $constraint"
+    fi
+
+    if [[ "$dry_run" == "true" ]]; then
+        clish_console_core_log_info "Dry-run: would add $package ($constraint) to $dep_type and install version $matched_version"
+        return 0
+    fi
+
+    # 备份 modulash.json
+    local backup_file="${config_file}.backup"
+    cp "$config_file" "$backup_file"
+
+    # 更新 modulash.json
+    if ! jq --arg dep "$package" --arg ver "$constraint" ".$dep_type[\$dep] = \$ver" "$config_file" > "$config_file.tmp"; then
+        clish_console_core_log_error "Failed to update modulash.json"
+        mv "$backup_file" "$config_file"
+        return 1
+    fi
+    mv "$config_file.tmp" "$config_file"
+    clish_console_core_log_info "Updated modulash.json"
+
+    # 安装依赖
+    clish_console_core_log_info "Installing $package ($matched_version)..."
+    if declare -f module_install_dependency >/dev/null; then
+        if module_install_dependency "$package" "$constraint"; then
+            clish_console_core_log_success "Installed $package ($matched_version)"
+        else
+            clish_console_core_log_error "Installation failed. Rolling back modulash.json..."
+            mv "$backup_file" "$config_file"
+            return 1
+        fi
+    else
+        clish_console_core_log_warning "module_install_dependency not available; dependency added to modulash.json but not installed."
+        clish_console_core_log_info "Run 'modulash sync' to install it."
+    fi
+
+    # 删除备份
+    rm -f "$backup_file"
+    clish_console_core_log_success "Require completed."
+    return 0
+}

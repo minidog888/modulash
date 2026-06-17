@@ -4,13 +4,13 @@
 # ============================================
 
 cmd_completion_description() {
-    echo "Generate Bash completion script for Clish"
+    echo "Generate Bash completion script for Modulash"
 }
 
 cmd_completion_handle() {
     cat <<'EOF'
-# Clish Bash Completion (compatible)
-_clish_completion() {
+# Modulash Bash Completion (compatible)
+_modulash_completion() {
     local cur prev
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
@@ -33,6 +33,6 @@ _clish_completion() {
 
     COMPREPLY=($(compgen -W "$commands" -- "$cur"))
 }
-complete -F _clish_completion clish
+complete -F _modulash_completion modulash
 EOF
 }
