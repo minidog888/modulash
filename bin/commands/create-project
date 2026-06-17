@@ -3,8 +3,9 @@
 # Command: create-project — Create a new Modulash project
 # ============================================
 
-# Load generator functions (if available)
+# Load generator and module functions (if available)
 import "@/lib/generator.sh" 2>/dev/null || true
+import "@/lib/module.sh" 2>/dev/null || true
 
 cmd_create-project_description() {
     echo "Create a new Modulash project from a package in the registry"
@@ -76,7 +77,7 @@ cmd_create-project_handle() {
     cd "$project_dir" || return 1
     # 不再设置 PROJECT_ROOT
 
-    # Generate core bootstrap files (pass PWD as argument)
+    # Generate core bootstrap files
     if declare -f generate_core >/dev/null; then
         clish_console_core_log_info "Generating bootstrap files..."
         generate_core "$PWD"
@@ -85,10 +86,22 @@ cmd_create-project_handle() {
         _manual_generate_aliases "$PWD"
     fi
 
-    # Sync dependencies (if module library loaded)
+    # -------------------------------------------------------------
+    # Sync dependencies (install missing modules)
+    # -------------------------------------------------------------
     if declare -f module_sync_modules >/dev/null; then
-        clish_console_core_log_info "Syncing dependencies..."
-        (cd "$PWD" && module_sync_modules) || clish_console_core_log_warning "Dependency sync failed."
+        clish_console_core_log_info "Syncing dependencies from $PWD/modulash.json ..."
+        # Run in subshell with PROJECT_ROOT set
+        (cd "$PWD" && {
+            echo "[DEBUG] Current directory: $PWD" >&2
+            echo "[DEBUG] modulash.json exists: $([ -f modulash.json ] && echo yes || echo no)" >&2
+            if [[ -f modulash.json ]]; then
+                echo "[DEBUG] Dependencies: $(jq -r '.dependencies // {} | keys[]' modulash.json 2>/dev/null)" >&2
+            fi
+            module_sync_modules
+        }) || clish_console_core_log_warning "Dependency sync failed."
+    else
+        clish_console_core_log_warning "module_sync_modules not available; dependencies not installed."
     fi
 
     clish_console_core_log_success "Project created successfully: $project_dir"
@@ -140,7 +153,7 @@ EOF
 }
 
 # ----------------------------------------------------------------------
-# Helper: Download package from registry (debug only with -vvv, but here we keep)
+# Helper: Download package from registry (debug only with -vvv)
 # ----------------------------------------------------------------------
 _download_package() {
     local package="$1"
@@ -238,7 +251,7 @@ _download_package() {
     local tarball="$dest/package.tar.gz"
     echo "[INFO] Downloading $tarball_url ..." >&2
     if ! curl -L -o "$tarball" "$tarball_url"; then
-        echo "[ERROR] Failed to download tarball from $tarball_url" >&2
+        echo "[ERROR] Failed to download tarball" >&2
         return 1
     fi
 
@@ -268,6 +281,7 @@ _download_package() {
     fi
 }
 
+# Helper: Find directory containing modulash.json
 _find_package_dir() {
     local root="$1"
     if [[ -f "$root/modulash.json" ]]; then
@@ -283,6 +297,7 @@ _find_package_dir() {
     return 1
 }
 
+# Helper: Set version in modulash.json
 _set_project_version() {
     local file="$1"
     local new_version="$2"
