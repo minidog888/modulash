@@ -1,0 +1,137 @@
+cmd_init_handle() {
+    # shellcheck source=/dev/null
+    import "@/lib/generator.sh"
+
+    local global_mode=false
+    local local_mode=false
+    local force=false
+    local no_interaction=false
+    local pkg_name=""
+    local description=""
+    local author=""
+    local version="1.0.0"
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --global) global_mode=true; shift ;;
+            --local)  local_mode=true; shift ;;
+            --force)  force=true; shift ;;
+            --no-interaction) no_interaction=true; shift ;;
+            --name)   pkg_name="$2"; shift 2 ;;
+            --description) description="$2"; shift 2 ;;
+            --author) author="$2"; shift 2 ;;
+            --version) version="$2"; shift 2 ;;
+            *) shift ;;
+        esac
+    done
+
+    local target_dir
+    if $global_mode; then
+        target_dir="${MODULASH_HOME:-$HOME/.modulash}"
+    else
+        if [[ -f "modulash.json" || -f "clish.build.json" ]]; then
+            target_dir="$PWD"
+        else
+            target_dir="$PWD"
+        fi
+    fi
+
+    mkdir -p "$target_dir"
+    cd "$target_dir"
+
+    if [[ -f "modulash.json" ]]; then
+        if [[ "$force" != true ]]; then
+            if [[ "$no_interaction" == true ]]; then
+                echo "modulash.json already exists. Use --force to overwrite." >&2
+                return 1
+            fi
+            read -p "modulash.json already exists. Overwrite? [y/N] " yn
+            if [[ ! "$yn" =~ ^[Yy]$ ]]; then
+                echo "Aborted." >&2
+                return 0
+            fi
+        fi
+    fi
+
+    # Interactive collection
+    if [[ "$no_interaction" == false ]]; then
+        local default_vendor="my"
+        local default_name=$(basename "$PWD" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g')
+        [[ -z "$default_name" ]] && default_name="module"
+        if [[ -z "$pkg_name" ]]; then
+            read -p "Package name (<vendor>/<name>) [$default_vendor/$default_name]: " input_name
+            pkg_name="${input_name:-$default_vendor/$default_name}"
+        fi
+        if [[ ! "$pkg_name" =~ ^[a-z0-9_-]+/[a-z0-9_-]+$ ]]; then
+            echo "Error: Package name must be in format vendor/name (lowercase, alphanumeric, - and _ allowed)." >&2
+            return 1
+        fi
+
+        if [[ -z "$description" ]]; then
+            read -p "Description: " description
+        fi
+
+        if [[ -z "$author" ]]; then
+            local git_name=$(git config --global user.name 2>/dev/null || echo "")
+            local git_email=$(git config --global user.email 2>/dev/null || echo "")
+            if [[ -n "$git_name" && -n "$git_email" ]]; then
+                default_author="$git_name <$git_email>"
+            else
+                default_author="Your Name <you@example.com>"
+            fi
+            read -p "Author [$default_author]: " input_author
+            author="${input_author:-$default_author}"
+        fi
+
+        if [[ -z "$version" ]]; then
+            read -p "Version [1.0.0]: " input_version
+            version="${input_version:-1.0.0}"
+        fi
+    else
+        [[ -z "$pkg_name" ]] && pkg_name="my/$(basename "$PWD" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g')"
+        [[ -z "$description" ]] && description=""
+        [[ -z "$author" ]] && author="$(git config --global user.name 2>/dev/null) <$(git config --global user.email 2>/dev/null)>" || author="Your Name <you@example.com>"
+        [[ -z "$version" ]] && version="1.0.0"
+    fi
+
+    # Extract author email for maintainers (if present)
+    local author_email="${author##*<}"
+    author_email="$(echo "$author_email" | sed 's/>.*$//' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+    [[ -z "$author_email" ]] && author_email=""
+
+    # Build maintainers array (single element, can be extended later)
+    local maintainers_json="[]"
+    if [[ -n "$author_email" ]]; then
+        maintainers_json="[\"$author_email\"]"
+    fi
+
+    cat > modulash.json <<EOF
+{
+  "name": "$pkg_name",
+  "version": "$version",
+  "description": "$description",
+  "author": "$author",
+  "maintainers": $maintainers_json,
+  "keywords": [],
+  "dependencies": {},
+  "aliases": {
+    "@": "./",
+    "@cmd": "./bin/commands"
+  },
+  "facade": {},
+  "devDependencies": [],
+  "optionalDependencies": [],
+  "registry": {
+    "default": "http://localhost:8000/api/packages",
+    "fallback": "./modules",
+    "local": "./modules"
+  }
+}
+EOF
+
+    echo "Created modulash.json"
+
+    generate_core "$PWD"
+
+    echo "Modulash project initialized successfully in $(pwd)"
+}
