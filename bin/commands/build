@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================
-# Command: build — Package Clish project
+# Command: build — Package Modulash project
 # ============================================
 
 cmd_build_description() {
@@ -10,8 +10,11 @@ cmd_build_description() {
 cmd_build_options() {
     clish_console_core_options_option "force" "Overwrite existing output file"
     clish_console_core_options_option "output" "Output file path (default: ./dist/modulash)" --arg
-    clish_console_core_options_option "config" "Configuration file (default: clish.build.json)" --arg
-    clish_console_core_options_option "exclude" "Additional exclude pattern" --arg
+    clish_console_core_options_option "config" "Configuration file (default: modulash.build.json)" --arg
+    clish_console_core_options_option "exclude" "Additional exclude pattern (comma-separated)" --arg
+    clish_console_core_options_option "include-dir" "Additional directories to include (comma-separated)" --arg
+    clish_console_core_options_option "include-file" "Additional files to include (comma-separated)" --arg
+    clish_console_core_options_option "entry" "Entry script file (overrides config)" --arg
     clish_console_core_options_option "verbose" "Show detailed output"
     clish_console_core_options_option "enable-debug" "Include --debug option in the built script"
 }
@@ -23,8 +26,38 @@ cmd_build_handle() {
     local enable_debug="${opt_enable_debug:-false}"
     local config_file="${opt_config:-modulash.build.json}"
 
+    local include_dirs_opt="${opt_include_dir:-}"
+    local include_files_opt="${opt_include_file:-}"
+    local exclude_opt="${opt_exclude:-}"
+    local entry_opt="${opt_entry:-}"
+    local output_opt="${opt_output:-}"
+    local force_opt="${opt_force:-}"
+    local enable_debug_opt="${opt_enable_debug:-}"
+    local verbose_opt="${opt_verbose:-}"
+
+    local -a cli_include_dirs=()
+    local -a cli_include_files=()
+    local -a cli_exclude_patterns=()
+    local cli_entry=""
+
+    if [[ -n "$include_dirs_opt" ]]; then
+        IFS=',' read -ra cli_include_dirs <<< "$include_dirs_opt"
+    fi
+    if [[ -n "$include_files_opt" ]]; then
+        IFS=',' read -ra cli_include_files <<< "$include_files_opt"
+    fi
+    if [[ -n "$exclude_opt" ]]; then
+        IFS=',' read -ra cli_exclude_patterns <<< "$exclude_opt"
+    fi
+    [[ -n "$entry_opt" ]] && cli_entry="$entry_opt"
+    [[ -n "$output_opt" ]] && output="$output_opt"
+    [[ "$force_opt" == "true" ]] && force=true
+    [[ "$enable_debug_opt" == "true" ]] && enable_debug=true
+    [[ "$verbose_opt" == "true" ]] && verbose=true
+
     local entry=""
     local -a include_dirs=()
+    local -a include_files=()
     local -a exclude_patterns=()
     local config_force=false
 
@@ -35,6 +68,9 @@ cmd_build_handle() {
         while IFS= read -r dir; do
             [[ -n "$dir" ]] && include_dirs+=("$dir")
         done < <(jq -r '.include_dirs[]' "$config_file" 2>/dev/null || true)
+        while IFS= read -r file; do
+            [[ -n "$file" ]] && include_files+=("$file")
+        done < <(jq -r '.include_files[]' "$config_file" 2>/dev/null || true)
         while IFS= read -r pat; do
             [[ -n "$pat" ]] && exclude_patterns+=("$pat")
         done < <(jq -r '.exclude_patterns[]' "$config_file" 2>/dev/null || true)
@@ -43,10 +79,25 @@ cmd_build_handle() {
         return 1
     fi
 
-    [[ -n "$opt_output" ]] && output="$opt_output"
-    [[ "$opt_force" == "true" ]] && force=true
-    [[ -n "$opt_exclude" ]] && exclude_patterns+=("$opt_exclude")
+    [[ -n "$cli_entry" ]] && entry="$cli_entry"
+    if [[ ${#cli_include_dirs[@]} -gt 0 ]]; then
+        include_dirs=("${cli_include_dirs[@]}")
+    fi
+    if [[ ${#cli_include_files[@]} -gt 0 ]]; then
+        include_files=("${cli_include_files[@]}")
+    fi
+    if [[ ${#cli_exclude_patterns[@]} -gt 0 ]]; then
+        exclude_patterns=("${cli_exclude_patterns[@]}")
+    fi
     [[ "$force" == "false" && "$config_force" == "true" ]] && force=true
+
+    local -a all_sources=()
+    for dir in "${include_dirs[@]}"; do
+        all_sources+=("$dir")
+    done
+    for file in "${include_files[@]}"; do
+        all_sources+=("$file")
+    done
 
     if [[ -z "$entry" ]]; then
         clish_console_core_log_error "No entry point specified."
@@ -71,7 +122,6 @@ cmd_build_handle() {
         echo "[INFO] Building Modulash into $output ..." >&2
     fi
 
-    # Collect all script files
     all_files=()
     seen=()
 
@@ -137,14 +187,44 @@ cmd_build_handle() {
         done < <(find "$dir" -type f | sort)
     }
 
-    for dir in "${include_dirs[@]}"; do
-        if [[ "$dir" = /* ]]; then
-            abs_dir="$dir"
+    _collect_file() {
+        local file="$1"
+        if [[ -f "$file" ]]; then
+            if _is_excluded "$file"; then
+                if [[ "$verbose" == "true" ]]; then
+                    echo "[DEBUG] Excluded: $file" >&2
+                fi
+                return
+            fi
+            if _is_script "$file"; then
+                _add_file "$file"
+                if [[ "$verbose" == "true" ]]; then
+                    echo "[DEBUG] Added: $file" >&2
+                fi
+            else
+                if [[ "$verbose" == "true" ]]; then
+                    echo "[DEBUG] Skipping non-script: $file" >&2
+                fi
+            fi
         else
-            abs_dir="$CLISH_CONSOLE_WORK_DIR/$dir"
+            if [[ "$verbose" == "true" ]]; then
+                echo "[DEBUG] File not found: $file" >&2
+            fi
         fi
-        _collect_dir "$abs_dir"
+    }
+
+    for src in "${all_sources[@]}"; do
+        if [[ -d "$src" ]]; then
+            abs_dir="$src"
+            [[ "$abs_dir" != /* ]] && abs_dir="$CLISH_CONSOLE_WORK_DIR/$src"
+            _collect_dir "$abs_dir"
+        else
+            abs_file="$src"
+            [[ "$abs_file" != /* ]] && abs_file="$CLISH_CONSOLE_WORK_DIR/$src"
+            _collect_file "$abs_file"
+        fi
     done
+
     _add_file "$entry"
 
     if [[ "$verbose" == "true" ]]; then
@@ -153,17 +233,14 @@ cmd_build_handle() {
         echo "[INFO] Collected ${#all_files[@]} files" >&2
     fi
 
-    # Create a temporary file to merge all content
     local tmp_merged=$(mktemp)
     trap 'rm -f "$tmp_merged"' RETURN
 
-    # Merge all files into temporary file, adding newline separators
     for src in "${all_files[@]}"; do
-        echo >> "$tmp_merged"  # ensure newline before each file
+        echo >> "$tmp_merged"
         cat "$src" >> "$tmp_merged"
     done
 
-    # Generate final script
     {
         echo '#!/usr/bin/env bash'
         echo '# ============================================'
@@ -172,8 +249,6 @@ cmd_build_handle() {
         echo 'set -eo pipefail'
         echo ''
 
-        # Apply filters to the merged content
-        # Remove shebang, import, source, readonly, and optionally comment lines
         if [[ "$enable_debug" == "true" ]]; then
             echo 'export CLISH_CONSOLE_PACKAGED=true'
         else
@@ -181,21 +256,18 @@ cmd_build_handle() {
             echo 'export CLISH_CONSOLE_CLOSE_DEBUG_ENABLED=true'
         fi
 
-        # Now output filtered content
         sed -E '/^#!.*bash/d' "$tmp_merged" \
             | sed -E '/^[[:space:]]*(import|source)[[:space:]]+/d' \
             | sed 's/\breadonly\b//g' \
-            | sed -E '/^[[:space:]]*$/d'   # also remove blank lines for smaller size
+            | sed -E '/^[[:space:]]*$/d'
     } > "$output"
 
-    # Ensure final newline
     echo >> "$output"
     chmod +x "$output"
 
-    # Syntax check
     if ! bash -n "$output" 2>/dev/null; then
         echo "[ERROR] Generated script has syntax errors. Please check the output." >&2
-        bash -n "$output"  # Show detailed error
+        bash -n "$output"
         return 1
     fi
 
