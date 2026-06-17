@@ -3,9 +3,11 @@
 generate_autoload() {
     local target_dir="$1"
     local sour="sour"
+    local bashc="bash"
 
     cat > "$target_dir/autoload.sh" <<EOF
-#!/bin/bash
+#!/bin/${bashc}
+# shellcheck shell=bash
 # ============================================
 # Module loader (compatible with bash 3.2)
 # ============================================
@@ -20,8 +22,10 @@ EOF
 generate_modulash() {
     local target_dir="$1"
     local sour="sour"
+    local bashc="bash"
     cat > "$target_dir/modulash.sh" <<EOF
-#!/bin/bash
+#!/bin/${bashc}
+# shellcheck shell=bash
 # Modulash Autoload - DO NOT EDIT
 SCRIPT_DIR="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
@@ -93,8 +97,10 @@ EOF
 # Generate vendor/modulash/aliases.sh
 generate_aliases() {
     local target_dir="$1"
-    cat > "$target_dir/aliases.sh" <<'EOF'
-#!/bin/bash
+    local bashc="bash"
+    cat > "$target_dir/aliases.sh" <<EOF
+#!/bin/${bashc}
+# shellcheck shell=bash
 # Modulash Aliases - DO NOT EDIT
 
 __MODULASH_ALIASES=(
@@ -109,8 +115,10 @@ EOF
 # Generate vendor/modulash/facades.sh
 generate_facades() {
     local target_dir="$1"
-    cat > "$target_dir/facades.sh" <<'EOF'
-#!/bin/bash
+    local bashc="bash"
+    cat > "$target_dir/facades.sh" <<EOF
+#!/bin/${bashc}
+# shellcheck shell=bash
 # ============================================
 # Auto-generated Facades - DO NOT EDIT MANUALLY
 # ============================================

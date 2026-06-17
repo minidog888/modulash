@@ -185,6 +185,7 @@ module_install_dependency_forced() {
 
     mkdir -p "$target_dir"
     cp -r "$pkg_dir"/* "$target_dir"/
+    # shellcheck disable=SC1091
     source "$target_dir/bootstrap.sh" 2>/dev/null || true
     module_enable_module "$dep_name"
 
@@ -223,7 +224,7 @@ module_install_dependency() {
         echo "[ERROR] Invalid JSON" >&2
         return 1
     fi
-    local versions
+    # shellcheck disable=SC2207
     versions=($(echo "$package_info" | jq -r '.versions[].version' | sort -V))
     [[ ${#versions[@]} -eq 0 ]] && return 1
     local matched_version
@@ -250,6 +251,7 @@ module_enable_module() {
     fi
     mkdir -p "$commands_dir"
     if [[ -d "$module_dir/commands" ]]; then
+        # shellcheck disable=SC2115
         rm -rf "$commands_dir/$module_name"
         ln -s "$module_dir/commands" "$commands_dir/$module_name"
         echo "[INFO] Enabled commands for $module_name" >&2
@@ -264,6 +266,7 @@ module_disable_module() {
     local module_name="$1"
     local commands_dir="$PWD/bin/commands"
     if [[ -L "$commands_dir/$module_name" ]] || [[ -d "$commands_dir/$module_name" ]]; then
+        # shellcheck disable=SC2115
         rm -rf "$commands_dir/$module_name"
         echo "Disabled $module_name"
         return 0
@@ -386,7 +389,7 @@ module_update_dependency() {
         return 1
     fi
 
-    local versions
+    # shellcheck disable=SC2207
     versions=($(echo "$package_info" | jq -r '.versions[].version' | sort -V))
     [[ ${#versions[@]} -eq 0 ]] && { echo "[ERROR] No versions" >&2; return 1; }
 
@@ -432,6 +435,7 @@ module_update_dependency() {
 
     mkdir -p "$target_dir"
     cp -r "$pkg_dir"/* "$target_dir"/
+    # shellcheck disable=SC1091
     source "$target_dir/bootstrap.sh" 2>/dev/null || true
     module_enable_module "$dep_name"
 
@@ -518,6 +522,7 @@ module_install_module() {
         return 1
     fi
 
+    # shellcheck disable=SC1091
     source "$target_dir/bootstrap.sh" 2>/dev/null || true
 
     module_enable_module "$module_name"

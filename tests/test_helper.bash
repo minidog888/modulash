@@ -25,7 +25,7 @@ assert_output_contains() {
 
 # 从 clish.build.json 读取 output 字段
 get_build_output() {
-    local config="$PROJECT_ROOT/clish.build.json"
+    local config="$PROJECT_ROOT/modulash.build.json"
     if [[ -f "$config" ]] && command -v jq >/dev/null 2>&1; then
         jq -r '.output // "./dist/modulash"' "$config"
     else
