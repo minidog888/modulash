@@ -27,7 +27,6 @@ cmd_update_handle() {
     clish_console_core_log_info "Updating project dependencies..."
 
     if declare -f module_update_all >/dev/null; then
-        # Use current working directory ($PWD) instead of PROJECT_ROOT
         (cd "$PWD" && module_update_all "$force") || {
             clish_console_core_log_error "Update failed."
             return 1

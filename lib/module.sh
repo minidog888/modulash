@@ -1,17 +1,14 @@
 #!/bin/bash
 # ============================================
 # Modulash Module Management Library
-# Provides functions for installing, enabling,
-# disabling, listing modules, and running scripts.
 # ============================================
 
-# Use current working directory for all paths
 export MODULE_VENDOR_DIR="${MODULE_VENDOR_DIR:-$PWD/vendor}"
 export MODULE_COMMANDS_DIR="${MODULE_COMMANDS_DIR:-$PWD/bin/commands}"
 
-# ============================================
-# Helper: Run scripts for a given event (safe with bash -c)
-# ============================================
+# ------------------------------------------------------------
+# Scripts (hooks)
+# ------------------------------------------------------------
 module_run_scripts() {
     local event="$1"
     local config_file="$PWD/modulash.json"
@@ -25,7 +22,6 @@ module_run_scripts() {
     local failed=0
     while IFS= read -r cmd; do
         echo "[RUN] $cmd"
-        # Use bash -c instead of eval for better security
         if ! bash -c "$cmd"; then
             echo "[ERROR] Script failed: $cmd" >&2
             ((failed++))
@@ -39,9 +35,9 @@ module_run_scripts() {
     return 0
 }
 
-# ============================================
-# Helper: Get registry URL from modulash.json
-# ============================================
+# ------------------------------------------------------------
+# Registry & version matching
+# ------------------------------------------------------------
 module_get_registry_url() {
     local config_file="$PWD/modulash.json"
     if ! command -v jq >/dev/null 2>&1; then
@@ -55,15 +51,11 @@ module_get_registry_url() {
     jq -r '.registry.default // "http://localhost:8000/api/packages"' "$config_file"
 }
 
-# ============================================
-# Helper: Match version constraint
-# ============================================
 module_match_version() {
     local constraint="$1"
     shift
     local versions=("$@")
     local best=""
-
     if [[ "$constraint" == ^* ]]; then
         local base="${constraint#^}"
         local major="${base%%.*}"
@@ -94,72 +86,83 @@ module_match_version() {
             fi
         done
     fi
-
     echo "$best"
 }
 
-# ============================================
-# Install a dependency by name and version constraint
-# ============================================
-module_install_dependency() {
-    local dep_name="$1"
-    local constraint="$2"
-    local registry_url
-    registry_url="$(module_get_registry_url)"
-    if [[ -z "$registry_url" ]]; then
-        echo "[ERROR] No registry URL configured" >&2
-        return 1
+# ------------------------------------------------------------
+# Lock file helpers (fixed with error checking)
+# ------------------------------------------------------------
+_read_lock_dep_version() {
+    local dep="$1"
+    local lock_file="$PWD/modulash.lock"
+    if [[ -f "$lock_file" ]]; then
+        jq -r ".dependencies.\"$dep\" // \"\"" "$lock_file" 2>/dev/null
+    else
+        echo ""
+    fi
+}
+
+_write_lock_dep_version() {
+    local dep="$1"
+    local version="$2"
+    local lock_file="$PWD/modulash.lock"
+    local tmp_lock="${lock_file}.tmp"
+
+    echo "[DEBUG] Writing lock: dep=$dep, version=$version, lock_file=$lock_file" >&2
+
+    if [[ -f "$lock_file" ]]; then
+        if ! jq --arg dep "$dep" --arg ver "$version" '.dependencies[$dep] = $ver' "$lock_file" > "$tmp_lock" 2>/dev/null; then
+            echo "[ERROR] jq failed to update lock file" >&2
+            return 1
+        fi
+    else
+        echo "{\"dependencies\":{\"$dep\":\"$version\"}}" > "$tmp_lock"
     fi
 
-    echo "[DEBUG] Installing $dep_name ($constraint) from $registry_url" >&2
+    if [[ -s "$tmp_lock" ]]; then
+        mv "$tmp_lock" "$lock_file"
+        echo "[DEBUG] Lock file written successfully" >&2
+        return 0
+    else
+        echo "[ERROR] Temporary lock file is empty" >&2
+        rm -f "$tmp_lock"
+        return 1
+    fi
+}
 
-    # Run pre-package-install hook
+# ------------------------------------------------------------
+# Install a dependency (forced version)
+# ------------------------------------------------------------
+module_install_dependency_forced() {
+    local dep_name="$1"
+    local version="$2"
+    local registry_url
+    registry_url="$(module_get_registry_url)"
+    [[ -z "$registry_url" ]] && return 1
+
     module_run_scripts "pre-package-install" || true
 
     local api_url="$registry_url/$dep_name"
     local package_info
     if ! package_info=$(curl -s "$api_url"); then
-        echo "[ERROR] Failed to fetch package info from $api_url" >&2
+        echo "[ERROR] Failed to fetch package info" >&2
         return 1
     fi
-
     if ! echo "$package_info" | jq -e . >/dev/null 2>&1; then
-        echo "[ERROR] Invalid JSON from registry: $api_url" >&2
-        echo "$package_info" | head -c 200 >&2
+        echo "[ERROR] Invalid JSON" >&2
         return 1
     fi
 
-    local versions
-    versions=($(echo "$package_info" | jq -r '.versions[].version' | sort -V))
-    if [[ ${#versions[@]} -eq 0 ]]; then
-        echo "[ERROR] No versions available for $dep_name" >&2
+    if ! echo "$package_info" | jq -e --arg ver "$version" '.versions[] | select(.version == $ver)' >/dev/null 2>&1; then
+        echo "[ERROR] Version $version not found for $dep_name" >&2
         return 1
     fi
-
-    local matched_version
-    matched_version="$(module_match_version "$constraint" "${versions[@]}")"
-    if [[ -z "$matched_version" ]]; then
-        echo "[ERROR] No version matches constraint '$constraint' for $dep_name" >&2
-        echo "[INFO] Available versions: ${versions[*]}" >&2
-        return 1
-    fi
-
-    echo "[INFO] Matched version: $matched_version" >&2
 
     local tarball_url
-    tarball_url=$(echo "$package_info" | jq -r --arg ver "$matched_version" '.versions[] | select(.version == $ver) | .download_url // ""')
-    if [[ -z "$tarball_url" || "$tarball_url" == "null" ]]; then
-        tarball_url="$registry_url/$dep_name/download/$matched_version"
-        echo "[WARN] download_url missing, using constructed URL: $tarball_url" >&2
-    fi
+    tarball_url=$(echo "$package_info" | jq -r --arg ver "$version" '.versions[] | select(.version == $ver) | .download_url // ""')
+    [[ -z "$tarball_url" || "$tarball_url" == "null" ]] && tarball_url="$registry_url/$dep_name/download/$version"
 
     local target_dir="$PWD/vendor/$dep_name"
-    if [[ -d "$target_dir" ]]; then
-        echo "[INFO] Module $dep_name already installed" >&2
-        # Run post-package-install even if already installed? Skip.
-        return 0
-    fi
-
     mkdir -p "$PWD/vendor"
     local tmp_dir
     tmp_dir="$(mktemp -d)"
@@ -168,60 +171,71 @@ module_install_dependency() {
     local tarball="$tmp_dir/package.tar.gz"
     echo "[INFO] Downloading $tarball_url ..." >&2
     if ! curl -L -o "$tarball" "$tarball_url"; then
-        echo "[ERROR] Failed to download tarball from $tarball_url" >&2
+        echo "[ERROR] Download failed" >&2
         return 1
     fi
-
     if ! tar -xzf "$tarball" -C "$tmp_dir"; then
-        echo "[ERROR] Failed to extract tarball" >&2
+        echo "[ERROR] Extraction failed" >&2
         return 1
     fi
 
     local pkg_dir
     pkg_dir="$(_find_pkg_dir "$tmp_dir")"
-    if [[ -z "$pkg_dir" ]]; then
-        echo "[ERROR] No modulash.json found in extracted archive" >&2
-        return 1
-    fi
+    [[ -z "$pkg_dir" ]] && { echo "[ERROR] No modulash.json" >&2; return 1; }
 
     mkdir -p "$target_dir"
     cp -r "$pkg_dir"/* "$target_dir"/
-
-    # Source bootstrap directly (no if)
     source "$target_dir/bootstrap.sh" 2>/dev/null || true
-
-    # Enable module (link commands)
     module_enable_module "$dep_name"
 
-    echo "[SUCCESS] Installed $dep_name ($matched_version)" >&2
+    if ! _write_lock_dep_version "$dep_name" "$version"; then
+        echo "[WARN] Failed to write lock file, but installation succeeded" >&2
+    fi
 
-    # Run post-package-install hook
+    echo "[SUCCESS] Installed $dep_name $version" >&2
     module_run_scripts "post-package-install" || true
-
     return 0
 }
 
-# ============================================
-# Helper: Find directory containing modulash.json
-# ============================================
-_find_pkg_dir() {
-    local root="$1"
-    if [[ -f "$root/modulash.json" ]]; then
-        echo "$root"
-        return 0
+# ------------------------------------------------------------
+# Install dependency with constraint (uses lock if exists)
+# ------------------------------------------------------------
+module_install_dependency() {
+    local dep_name="$1"
+    local constraint="$2"
+    local locked
+    locked="$(_read_lock_dep_version "$dep_name")"
+    if [[ -n "$locked" ]]; then
+        module_install_dependency_forced "$dep_name" "$locked"
+        return $?
     fi
-    for d in "$root"/*/; do
-        if [[ -f "$d/modulash.json" ]]; then
-            echo "$d"
-            return 0
-        fi
-    done
-    return 1
+
+    local registry_url
+    registry_url="$(module_get_registry_url)"
+    [[ -z "$registry_url" ]] && return 1
+    local api_url="$registry_url/$dep_name"
+    local package_info
+    if ! package_info=$(curl -s "$api_url"); then
+        echo "[ERROR] Failed to fetch package info" >&2
+        return 1
+    fi
+    if ! echo "$package_info" | jq -e . >/dev/null 2>&1; then
+        echo "[ERROR] Invalid JSON" >&2
+        return 1
+    fi
+    local versions
+    versions=($(echo "$package_info" | jq -r '.versions[].version' | sort -V))
+    [[ ${#versions[@]} -eq 0 ]] && return 1
+    local matched_version
+    matched_version="$(module_match_version "$constraint" "${versions[@]}")"
+    [[ -z "$matched_version" ]] && return 1
+    module_install_dependency_forced "$dep_name" "$matched_version"
+    return $?
 }
 
-# ============================================
-# Enable a module (create symlink to commands)
-# ============================================
+# ------------------------------------------------------------
+# Enable/disable/list
+# ------------------------------------------------------------
 module_enable_module() {
     local module_name="$1"
     local module_dir="$PWD/vendor/$module_name"
@@ -246,9 +260,6 @@ module_enable_module() {
     fi
 }
 
-# ============================================
-# Disable a module
-# ============================================
 module_disable_module() {
     local module_name="$1"
     local commands_dir="$PWD/bin/commands"
@@ -262,9 +273,6 @@ module_disable_module() {
     fi
 }
 
-# ============================================
-# List modules
-# ============================================
 module_list_modules() {
     local vendor_dir="$PWD/vendor"
     local commands_dir="$PWD/bin/commands"
@@ -292,21 +300,32 @@ module_list_modules() {
     done
 }
 
-# ============================================
-# Sync dependencies: install missing ones from registry
-# ============================================
+_find_pkg_dir() {
+    local root="$1"
+    if [[ -f "$root/modulash.json" ]]; then
+        echo "$root"
+        return 0
+    fi
+    for d in "$root"/*/; do
+        if [[ -f "$d/modulash.json" ]]; then
+            echo "$d"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# ------------------------------------------------------------
+# Sync (install missing)
+# ------------------------------------------------------------
 module_sync_modules() {
     if ! command -v jq >/dev/null 2>&1; then
-        echo "[ERROR] jq is required for module sync" >&2
+        echo "[ERROR] jq required" >&2
         return 1
     fi
     local config_file="$PWD/modulash.json"
-    if [[ ! -f "$config_file" ]]; then
-        echo "[ERROR] modulash.json not found in $PWD" >&2
-        return 1
-    fi
+    [[ ! -f "$config_file" ]] && { echo "[ERROR] modulash.json not found" >&2; return 1; }
 
-    # Run pre-install hook
     module_run_scripts "pre-install" || true
 
     local deps_json
@@ -314,40 +333,160 @@ module_sync_modules() {
     local modules
     modules="$(jq -r 'keys[]' <<< "$deps_json")"
     if [[ -z "$modules" ]]; then
-        echo "[INFO] No dependencies found in $config_file"
+        echo "[INFO] No dependencies found"
         return 0
     fi
 
-    echo "[INFO] Syncing dependencies from $config_file ..."
+    echo "[INFO] Installing dependencies..."
     local failed=0
     for mod in $modules; do
         local constraint
         constraint="$(jq -r ".\"$mod\"" <<< "$deps_json")"
         if [[ -d "$PWD/vendor/$mod" ]]; then
-            echo "[INFO]   $mod already installed"
-        else
-            echo "[INFO]   Installing $mod ($constraint)..."
-            if ! module_install_dependency "$mod" "$constraint"; then
-                echo "[ERROR]   Failed to install $mod" >&2
-                ((failed++))
-            fi
+            echo "[INFO] $mod already installed"
+            continue
+        fi
+        echo "[INFO] Installing $mod ($constraint)"
+        if ! module_install_dependency "$mod" "$constraint"; then
+            echo "[ERROR] Failed to install $mod" >&2
+            ((failed++))
         fi
     done
 
-    # Run post-install hook
     module_run_scripts "post-install" || true
-
     if [[ $failed -gt 0 ]]; then
-        echo "[ERROR] Some dependencies failed to install" >&2
+        echo "[ERROR] Some installs failed" >&2
         return 1
     fi
     echo "[SUCCESS] All dependencies installed"
     return 0
 }
 
-# ============================================
-# Install a module from Git/local path
-# ============================================
+# ------------------------------------------------------------
+# Update (with lock)
+# ------------------------------------------------------------
+module_update_dependency() {
+    local dep_name="$1"
+    local constraint="$2"
+    local force="${3:-false}"
+    local registry_url
+    registry_url="$(module_get_registry_url)"
+    [[ -z "$registry_url" ]] && { echo "[ERROR] No registry URL" >&2; return 1; }
+
+    module_run_scripts "pre-package-install" || true
+
+    local api_url="$registry_url/$dep_name"
+    local package_info
+    if ! package_info=$(curl -s "$api_url"); then
+        echo "[ERROR] Failed to fetch package info" >&2
+        return 1
+    fi
+    if ! echo "$package_info" | jq -e . >/dev/null 2>&1; then
+        echo "[ERROR] Invalid JSON" >&2
+        return 1
+    fi
+
+    local versions
+    versions=($(echo "$package_info" | jq -r '.versions[].version' | sort -V))
+    [[ ${#versions[@]} -eq 0 ]] && { echo "[ERROR] No versions" >&2; return 1; }
+
+    local matched_version
+    matched_version="$(module_match_version "$constraint" "${versions[@]}")"
+    [[ -z "$matched_version" ]] && { echo "[ERROR] No matching version" >&2; return 1; }
+
+    local locked_version
+    locked_version="$(_read_lock_dep_version "$dep_name")"
+
+    if [[ "$force" != "true" && -n "$locked_version" && "$locked_version" == "$matched_version" ]]; then
+        echo "[INFO] $dep_name locked at $locked_version (already up-to-date)"
+        module_run_scripts "post-package-install" || true
+        return 0
+    fi
+
+    # Download and install
+    local target_dir="$PWD/vendor/$dep_name"
+    local tarball_url
+    tarball_url=$(echo "$package_info" | jq -r --arg ver "$matched_version" '.versions[] | select(.version == $ver) | .download_url // ""')
+    [[ -z "$tarball_url" || "$tarball_url" == "null" ]] && tarball_url="$registry_url/$dep_name/download/$matched_version"
+
+    rm -rf "$target_dir"
+    mkdir -p "$PWD/vendor"
+    local tmp_dir
+    tmp_dir="$(mktemp -d)"
+    trap 'rm -rf "$tmp_dir"' RETURN
+
+    local tarball="$tmp_dir/package.tar.gz"
+    echo "[INFO] Downloading $tarball_url ..." >&2
+    if ! curl -L -o "$tarball" "$tarball_url"; then
+        echo "[ERROR] Download failed" >&2
+        return 1
+    fi
+    if ! tar -xzf "$tarball" -C "$tmp_dir"; then
+        echo "[ERROR] Extraction failed" >&2
+        return 1
+    fi
+
+    local pkg_dir
+    pkg_dir="$(_find_pkg_dir "$tmp_dir")"
+    [[ -z "$pkg_dir" ]] && { echo "[ERROR] No modulash.json" >&2; return 1; }
+
+    mkdir -p "$target_dir"
+    cp -r "$pkg_dir"/* "$target_dir"/
+    source "$target_dir/bootstrap.sh" 2>/dev/null || true
+    module_enable_module "$dep_name"
+
+    if ! _write_lock_dep_version "$dep_name" "$matched_version"; then
+        echo "[WARN] Failed to write lock file, but update succeeded" >&2
+    fi
+
+    echo "[SUCCESS] Updated $dep_name to $matched_version" >&2
+    module_run_scripts "post-package-install" || true
+    return 0
+}
+
+module_update_all() {
+    local force="${1:-false}"
+    if ! command -v jq >/dev/null 2>&1; then
+        echo "[ERROR] jq required" >&2
+        return 1
+    fi
+    local config_file="$PWD/modulash.json"
+    [[ ! -f "$config_file" ]] && { echo "[ERROR] modulash.json not found" >&2; return 1; }
+
+    module_run_scripts "pre-update" || true
+
+    local deps_json
+    deps_json="$(jq -r '.dependencies // {}' "$config_file")"
+    local modules
+    modules="$(jq -r 'keys[]' <<< "$deps_json")"
+    if [[ -z "$modules" ]]; then
+        echo "[INFO] No dependencies found" >&2
+        return 0
+    fi
+
+    echo "[INFO] Updating all dependencies..." >&2
+    local failed=0
+    for mod in $modules; do
+        local constraint
+        constraint="$(jq -r ".\"$mod\"" <<< "$deps_json")"
+        if ! module_update_dependency "$mod" "$constraint" "$force"; then
+            echo "[ERROR] Failed to update $mod" >&2
+            ((failed++))
+        fi
+    done
+
+    module_run_scripts "post-update" || true
+    if [[ $failed -gt 0 ]]; then
+        echo "[ERROR] Some updates failed" >&2
+        return 1
+    fi
+    echo "[SUCCESS] All dependencies updated" >&2
+    return 0
+}
+
+# ------------------------------------------------------------
+# Install from Git/local path (compatibility)
+# ------------------------------------------------------------
 module_install_module() {
     local source_url="$1"
     local module_name="$2"
@@ -383,162 +522,5 @@ module_install_module() {
 
     module_enable_module "$module_name"
     echo "Module '$module_name' installed successfully"
-    return 0
-}
-
-# ============================================
-# Update a dependency to the latest matching version
-# ============================================
-module_update_dependency() {
-    local dep_name="$1"
-    local constraint="$2"
-    local force="${3:-false}"
-    local registry_url
-    registry_url="$(module_get_registry_url)"
-    if [[ -z "$registry_url" ]]; then
-        echo "[ERROR] No registry URL configured" >&2
-        return 1
-    fi
-
-    echo "[DEBUG] Updating $dep_name ($constraint) from $registry_url" >&2
-
-    local api_url="$registry_url/$dep_name"
-    local package_info
-    if ! package_info=$(curl -s "$api_url"); then
-        echo "[ERROR] Failed to fetch package info from $api_url" >&2
-        return 1
-    fi
-
-    if ! echo "$package_info" | jq -e . >/dev/null 2>&1; then
-        echo "[ERROR] Invalid JSON from registry: $api_url" >&2
-        echo "$package_info" | head -c 200 >&2
-        return 1
-    fi
-
-    local versions
-    versions=($(echo "$package_info" | jq -r '.versions[].version' | sort -V))
-    if [[ ${#versions[@]} -eq 0 ]]; then
-        echo "[ERROR] No versions available for $dep_name" >&2
-        return 1
-    fi
-
-    local matched_version
-    matched_version="$(module_match_version "$constraint" "${versions[@]}")"
-    if [[ -z "$matched_version" ]]; then
-        echo "[ERROR] No version matches constraint '$constraint' for $dep_name" >&2
-        echo "[INFO] Available versions: ${versions[*]}" >&2
-        return 1
-    fi
-
-    # Check current installed version (if any)
-    local target_dir="$PWD/vendor/$dep_name"
-    local current_version=""
-    if [[ -d "$target_dir" && -f "$target_dir/modulash.json" ]]; then
-        current_version=$(jq -r '.version // ""' "$target_dir/modulash.json" 2>/dev/null)
-    fi
-
-    if [[ "$force" != "true" && -n "$current_version" && "$current_version" == "$matched_version" ]]; then
-        echo "[INFO] $dep_name already at latest version $matched_version" >&2
-        return 0
-    fi
-
-    if [[ -n "$current_version" ]]; then
-        echo "[INFO] Updating $dep_name from $current_version to $matched_version" >&2
-    else
-        echo "[INFO] Installing $dep_name $matched_version" >&2
-    fi
-
-    # Download new version
-    local tarball_url
-    tarball_url=$(echo "$package_info" | jq -r --arg ver "$matched_version" '.versions[] | select(.version == $ver) | .download_url // ""')
-    if [[ -z "$tarball_url" || "$tarball_url" == "null" ]]; then
-        tarball_url="$registry_url/$dep_name/download/$matched_version"
-        echo "[WARN] download_url missing, using constructed URL: $tarball_url" >&2
-    fi
-
-    # Remove old directory
-    rm -rf "$target_dir"
-
-    mkdir -p "$PWD/vendor"
-    local tmp_dir
-    tmp_dir="$(mktemp -d)"
-    trap 'rm -rf "$tmp_dir"' RETURN
-
-    local tarball="$tmp_dir/package.tar.gz"
-    echo "[INFO] Downloading $tarball_url ..." >&2
-    if ! curl -L -o "$tarball" "$tarball_url"; then
-        echo "[ERROR] Failed to download tarball from $tarball_url" >&2
-        return 1
-    fi
-
-    if ! tar -xzf "$tarball" -C "$tmp_dir"; then
-        echo "[ERROR] Failed to extract tarball" >&2
-        return 1
-    fi
-
-    local pkg_dir
-    pkg_dir="$(_find_pkg_dir "$tmp_dir")"
-    if [[ -z "$pkg_dir" ]]; then
-        echo "[ERROR] No modulash.json found in extracted archive" >&2
-        return 1
-    fi
-
-    mkdir -p "$target_dir"
-    cp -r "$pkg_dir"/* "$target_dir"/
-
-    # Source bootstrap
-    source "$target_dir/bootstrap.sh" 2>/dev/null || true
-
-    # Re-enable module (link commands)
-    module_enable_module "$dep_name"
-
-    echo "[SUCCESS] Updated $dep_name to $matched_version" >&2
-    return 0
-}
-
-# ============================================
-# Update all dependencies
-# ============================================
-module_update_all() {
-    local force="${1:-false}"
-    if ! command -v jq >/dev/null 2>&1; then
-        echo "[ERROR] jq is required" >&2
-        return 1
-    fi
-    local config_file="$PWD/modulash.json"
-    if [[ ! -f "$config_file" ]]; then
-        echo "[ERROR] modulash.json not found" >&2
-        return 1
-    fi
-
-    module_run_scripts "pre-update" || true
-
-    local deps_json
-    deps_json="$(jq -r '.dependencies // {}' "$config_file")"
-    local modules
-    modules="$(jq -r 'keys[]' <<< "$deps_json")"
-    if [[ -z "$modules" ]]; then
-        echo "[INFO] No dependencies found" >&2
-        return 0
-    fi
-
-    echo "[INFO] Updating all dependencies..." >&2
-    local failed=0
-    for mod in $modules; do
-        local constraint
-        constraint="$(jq -r ".\"$mod\"" <<< "$deps_json")"
-        if ! module_update_dependency "$mod" "$constraint" "$force"; then
-            echo "[ERROR] Failed to update $mod" >&2
-            ((failed++))
-        fi
-    done
-
-    module_run_scripts "post-update" || true
-
-    if [[ $failed -gt 0 ]]; then
-        echo "[ERROR] Some dependencies failed to update" >&2
-        return 1
-    fi
-    echo "[SUCCESS] All dependencies updated" >&2
     return 0
 }
