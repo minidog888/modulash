@@ -56,6 +56,22 @@ module_match_version() {
     shift
     local versions=("$@")
     local best=""
+
+    # 处理通配符 * (如 1.*, 1.0.*)
+    if [[ "$constraint" == *"*"* ]]; then
+        local prefix="${constraint%\*}"
+        for v in "${versions[@]}"; do
+            if [[ "$v" == "$prefix"* ]]; then
+                if [[ -z "$best" ]] || [[ "$v" > "$best" ]]; then
+                    best="$v"
+                fi
+            fi
+        done
+        echo "$best"
+        return 0
+    fi
+
+    # 原有 ^, ~, * 和精确匹配
     if [[ "$constraint" == ^* ]]; then
         local base="${constraint#^}"
         local major="${base%%.*}"
