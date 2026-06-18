@@ -119,7 +119,7 @@ cmd_build_handle() {
     if [[ "$verbose" == "true" ]]; then
         clish_console_core_log_info "Building $entry into $output ... (debug: $([[ "$enable_debug" == "true" ]] && echo "enabled" || echo "disabled"))"
     else
-        clish_console_core_log_info "Building Modulash into $output ..." >&2
+        clish_console_core_log_info "Building Modulash into $output ..."
     fi
 
     all_files=()
@@ -169,18 +169,18 @@ cmd_build_handle() {
             if [[ -f "$file" ]]; then
                 if _is_excluded "$file"; then
                     if [[ "$verbose" == "true" ]]; then
-                        clish_console_core_log_debug "Excluded: $file" >&2
+                        clish_console_core_log_debug "Excluded: $file"
                     fi
                     continue
                 fi
                 if _is_script "$file"; then
                     _add_file "$file"
                     if [[ "$verbose" == "true" ]]; then
-                        clish_console_core_log_debug "Added: $file" >&2
+                        clish_console_core_log_debug "Added: $file"
                     fi
                 else
                     if [[ "$verbose" == "true" ]]; then
-                        clish_console_core_log_debug "Skipping non-script: $file" >&2
+                        clish_console_core_log_debug "Skipping non-script: $file"
                     fi
                 fi
             fi
@@ -192,23 +192,23 @@ cmd_build_handle() {
         if [[ -f "$file" ]]; then
             if _is_excluded "$file"; then
                 if [[ "$verbose" == "true" ]]; then
-                    clish_console_core_log_debug "Excluded: $file" >&2
+                    clish_console_core_log_debug "Excluded: $file"
                 fi
                 return
             fi
             if _is_script "$file"; then
                 _add_file "$file"
                 if [[ "$verbose" == "true" ]]; then
-                    clish_console_core_log_debug "Added: $file" >&2
+                    clish_console_core_log_debug "Added: $file"
                 fi
             else
                 if [[ "$verbose" == "true" ]]; then
-                    clish_console_core_log_debug "Skipping non-script: $file" >&2
+                    clish_console_core_log_debug "Skipping non-script: $file"
                 fi
             fi
         else
             if [[ "$verbose" == "true" ]]; then
-                clish_console_core_log_debug "File not found: $file" >&2
+                clish_console_core_log_debug "File not found: $file"
             fi
         fi
     }
@@ -228,9 +228,9 @@ cmd_build_handle() {
     _add_file "$entry"
 
     if [[ "$verbose" == "true" ]]; then
-        clish_console_core_log_info "Collected ${#all_files[@]} files" >&2
+        clish_console_core_log_info "Collected ${#all_files[@]} files"
     else
-        clish_console_core_log_info "Collected ${#all_files[@]} files" >&2
+        clish_console_core_log_info "Collected ${#all_files[@]} files"
     fi
 
     local tmp_merged=$(mktemp)
@@ -241,6 +241,14 @@ cmd_build_handle() {
         cat "$src" >> "$tmp_merged"
     done
 
+    # Read version from modulash.json
+    local version
+    if [[ -f "$MODULASH_WORK_DIR/modulash.json" ]]; then
+        version=$(jq -r '.version // "unknown"' "$MODULASH_WORK_DIR/modulash.json")
+    else
+        version="unknown"
+    fi
+
     {
         echo '#!/usr/bin/env bash'
         echo '# ============================================'
@@ -248,7 +256,7 @@ cmd_build_handle() {
         echo '# ============================================'
         echo 'set -eo pipefail'
         echo ''
-
+        echo "export MODULASH_VERSION=\"$version\""
         echo 'export MODULASH_PACKAGED=true'
         if [[ "$enable_debug" == "true" ]]; then
             echo 'export MODULASH_DEBUG_MODE=true'
@@ -266,7 +274,7 @@ cmd_build_handle() {
     chmod +x "$output"
 
     if ! bash -n "$output" 2>/dev/null; then
-        clish_console_core_log_error "Generated script has syntax errors. Please check the output." >&2
+        clish_console_core_log_error "Generated script has syntax errors. Please check the output."
         bash -n "$output"
         return 1
     fi
@@ -275,7 +283,7 @@ cmd_build_handle() {
         clish_console_core_log_success "Build completed: $output"
         clish_console_core_log_info "Size: $(du -h "$output" | cut -f1)"
     else
-        clish_console_core_log_success "Build completed: $output" >&2
-        clish_console_core_log_info "Size: $(du -h "$output" | cut -f1)" >&2
+        clish_console_core_log_success "Build completed: $output"
+        clish_console_core_log_info "Size: $(du -h "$output" | cut -f1)"
     fi
 }

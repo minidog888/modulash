@@ -3,8 +3,8 @@
 # Command: self-update — Update Modulash itself
 # ============================================
 
-# 默认更新源（可在构建时替换）
-DEFAULT_UPDATE_URL="http://localhost:8000/api/versions.json"
+DEFAULT_UPDATE_URL="https://raw.githubusercontent.com/minidog888/modulash-releases/main/versions.json"
+FALLBACK_UPDATE_URL="https://gitee.com/minidog888/modulash-releases/raw/main/releases/versions.json"
 
 cmd_self-update_description() {
     echo "Update Modulash to the latest version"
@@ -15,8 +15,9 @@ cmd_self-update_options() {
     clish_console_core_options_option "force" "Force update even if same version"
     clish_console_core_options_option "rollback" "Rollback to the previous version"
     clish_console_core_options_option "stable" "Update to latest stable (default)"
-    clish_console_core_options_option "preview" "Update to latest preview version (alias: latest)"
+    clish_console_core_options_option "preview" "Update to latest preview version"
     clish_console_core_options_option "update-url" "Custom update metadata URL" --arg
+    clish_console_core_options_option "file" "Install from a local file instead of downloading" --arg
     clish_console_core_options_option "debug" "Print debug information"
 }
 
@@ -26,10 +27,10 @@ cmd_self-update_handle() {
     local rollback="${opt_rollback:-false}"
     local channel="${opt_channel:-stable}"
     local version="${arg_version:-}"
-    local update_url="${opt_update_url:-$DEFAULT_UPDATE_URL}"
+    local update_url="${opt_update_url:-}"
+    local local_file="${opt_file:-}"
     local debug="${opt_debug:-false}"
 
-    # 获取当前脚本路径
     local script_path
     script_path="$(readlink -f "$0")"
     if [[ ! -w "$script_path" ]]; then
@@ -42,7 +43,19 @@ cmd_self-update_handle() {
         return $?
     fi
 
-    # 检查工具
+    if [[ -n "$local_file" ]]; then
+        if [[ ! -f "$local_file" ]]; then
+            clish_console_core_log_error "Local file not found: $local_file"
+            return 1
+        fi
+        if [[ "$dry_run" == "true" ]]; then
+            clish_console_core_log_info "Dry-run: would replace with $local_file"
+            return 0
+        fi
+        _install_local_file "$local_file" "$script_path"
+        return $?
+    fi
+
     for cmd in curl jq; do
         if ! command -v "$cmd" >/dev/null 2>&1; then
             clish_console_core_log_error "Required tool '$cmd' is not installed."
@@ -50,66 +63,64 @@ cmd_self-update_handle() {
         fi
     done
 
-    # 当前版本（构建时注入）
     local current_version="${MODULASH_VERSION:-unknown}"
     clish_console_core_log_info "Current version: $current_version"
 
-    # 下载版本信息
     local tmp_dir
     tmp_dir="$(mktemp -d)"
     trap 'rm -rf "$tmp_dir"' RETURN
     local meta_file="$tmp_dir/versions.json"
-    if ! curl -s -L -o "$meta_file" "$update_url"; then
-        clish_console_core_log_error "Failed to fetch version metadata from $update_url"
+
+    # Try primary update URL, fallback to secondary
+    local urls_to_try=()
+    if [[ -n "$update_url" ]]; then
+        urls_to_try+=("$update_url")
+    else
+        urls_to_try+=("$DEFAULT_UPDATE_URL")
+        urls_to_try+=("$FALLBACK_UPDATE_URL")
+    fi
+
+    local meta_fetched=false
+    for url in "${urls_to_try[@]}"; do
+        if [[ "$debug" == "true" ]]; then
+            echo "[DEBUG] Trying to fetch metadata from: $url" >&2
+        fi
+        if curl -s -L --connect-timeout 5 --retry 2 "$url" -o "$meta_file"; then
+            meta_fetched=true
+            break
+        fi
+    done
+
+    if [[ "$meta_fetched" != "true" ]]; then
+        clish_console_core_log_error "Failed to fetch version metadata from any source."
         return 1
     fi
 
     if [[ "$debug" == "true" ]]; then
-        clish_console_core_log_debug "Downloaded metadata:" >&2
+        echo "[DEBUG] Downloaded metadata:" >&2
         cat "$meta_file" >&2
     fi
 
-    # 验证 JSON
     if ! jq -e . "$meta_file" >/dev/null 2>&1; then
-        clish_console_core_log_error "Invalid JSON from update URL"
+        clish_console_core_log_error "Invalid JSON from update source"
         return 1
     fi
 
-    # 解析版本信息 - 适配您的 JSON 格式
     local latest_version download_url sha256 sig_url
-
-    if [[ -n "$version" ]]; then
-        # 指定版本：从 versions 对象中查找
-        latest_version="$version"
-        download_url="$(jq -r --arg v "$version" '.versions[$v].download_url // ""' "$meta_file" 2>/dev/null)"
-        sha256="$(jq -r --arg v "$version" '.versions[$v].file_hash // ""' "$meta_file" 2>/dev/null)"
-        # signature_url 在您的格式中没有，留空
-        sig_url=""
-    else
-        # 根据通道选取
-        if [[ "$channel" == "stable" || "$channel" == "latest" ]]; then
-            # 优先使用 stable 对象，若不存在则使用 latest
-            latest_version="$(jq -r '.stable.version // .latest.version // ""' "$meta_file" 2>/dev/null)"
-            download_url="$(jq -r '.stable.download_url // .latest.download_url // ""' "$meta_file" 2>/dev/null)"
-            sha256="$(jq -r '.stable.file_hash // .latest.file_hash // ""' "$meta_file" 2>/dev/null)"
-            sig_url="$(jq -r '.stable.signature_url // .latest.signature_url // ""' "$meta_file" 2>/dev/null)"
-        elif [[ "$channel" == "preview" ]]; then
-            # preview 通道：取 versions 中 stable=false 且版本号最高的
-            latest_version="$(jq -r '[.versions | to_entries[] | select(.value.stable == false) | .key] | sort | last' "$meta_file" 2>/dev/null)"
-            if [[ -n "$latest_version" && "$latest_version" != "null" ]]; then
-                download_url="$(jq -r --arg v "$latest_version" '.versions[$v].download_url // ""' "$meta_file" 2>/dev/null)"
-                sha256="$(jq -r --arg v "$latest_version" '.versions[$v].file_hash // ""' "$meta_file" 2>/dev/null)"
-                sig_url=""
-            fi
-        fi
+    if [[ "$channel" == "stable" ]]; then
+        latest_version=$(jq -r '.stable.version // ""' "$meta_file")
+        download_url=$(jq -r '.stable.download_url // ""' "$meta_file")
+        sha256=$(jq -r '.stable.sha256 // ""' "$meta_file")
+        sig_url=$(jq -r '.stable.signature_url // ""' "$meta_file")
+    elif [[ "$channel" == "preview" ]]; then
+        latest_version=$(jq -r '.preview.version // ""' "$meta_file")
+        download_url=$(jq -r '.preview.download_url // ""' "$meta_file")
+        sha256=$(jq -r '.preview.sha256 // ""' "$meta_file")
+        sig_url=$(jq -r '.preview.signature_url // ""' "$meta_file")
     fi
 
     if [[ -z "$latest_version" || -z "$download_url" ]]; then
-        clish_console_core_log_error "No version found for the given criteria"
-        if [[ "$debug" == "true" ]]; then
-            clish_console_core_log_debug "latest_version='$latest_version', download_url='$download_url'" >&2
-            clish_console_core_log_debug "Channel: $channel, Version: $version" >&2
-        fi
+        clish_console_core_log_error "No version found for channel '$channel'"
         return 1
     fi
 
@@ -125,83 +136,68 @@ cmd_self-update_handle() {
         return 0
     fi
 
-    # 下载新版本
     local new_file="$tmp_dir/modulash-new.sh"
     clish_console_core_log_info "Downloading $download_url ..."
-    if ! curl -s -L -o "$new_file" "$download_url"; then
+    if ! curl -s -L --connect-timeout 5 --retry 2 "$download_url" -o "$new_file"; then
         clish_console_core_log_error "Download failed"
         return 1
     fi
 
-    # 校验文件哈希（SHA256/MD5）
     if [[ -n "$sha256" && "$sha256" != "null" ]]; then
-        # 检测哈希算法（自动识别 md5 或 sha256）
-        if [[ ${#sha256} -eq 32 ]]; then
-            # MD5
-            local actual_hash
-            actual_hash="$(md5 -q "$new_file" 2>/dev/null || md5sum "$new_file" | awk '{print $1}')"
-            if [[ "$actual_hash" != "$sha256" ]]; then
-                clish_console_core_log_error "MD5 mismatch: expected $sha256, got $actual_hash"
-                return 1
-            fi
-        else
-            # SHA256
-            local actual_hash
-            actual_hash="$(sha256sum "$new_file" | awk '{print $1}')"
-            if [[ "$actual_hash" != "$sha256" ]]; then
-                clish_console_core_log_error "SHA256 mismatch: expected $sha256, got $actual_hash"
-                return 1
-            fi
+        local actual_sha
+        actual_sha="$(sha256sum "$new_file" | awk '{print $1}')"
+        if [[ "$actual_sha" != "$sha256" ]]; then
+            clish_console_core_log_error "SHA256 mismatch: expected $sha256, got $actual_sha"
+            return 1
         fi
-        clish_console_core_log_info "Hash verification passed"
     fi
 
-    # 签名验证（您的格式暂无，但保留逻辑）
     if [[ -n "$sig_url" && "$sig_url" != "null" ]]; then
         if ! command -v gpg >/dev/null 2>&1; then
             clish_console_core_log_warning "gpg not available; skipping signature verification"
         else
             local sig_file="$tmp_dir/modulash.sig"
-            if ! curl -s -L -o "$sig_file" "$sig_url"; then
-                clish_console_core_log_warning "Failed to download signature; skipping verification"
-            else
+            if curl -s -L --connect-timeout 5 --retry 2 "$sig_url" -o "$sig_file"; then
                 if ! gpg --verify "$sig_file" "$new_file" 2>/dev/null; then
                     clish_console_core_log_error "GPG signature verification failed. Aborting."
                     return 1
                 else
                     clish_console_core_log_success "GPG signature verified"
                 fi
+            else
+                clish_console_core_log_warning "Failed to download signature; skipping verification"
             fi
         fi
     fi
 
-    # 备份当前版本
-    local backup_dir="$HOME/.modulash-backups"
-    mkdir -p "$backup_dir"
-    local backup_name="modulash.backup.$(date +%Y%m%d_%H%M%S)"
-    local backup_path="$backup_dir/$backup_name"
-    cp "$script_path" "$backup_path"
-    clish_console_core_log_info "Backed up current version to $backup_path"
-
-    # 清理旧备份（保留最多5个）
-    _clean_old_backups "$backup_dir"
-
-    # 替换
-    if ! cp "$new_file" "$script_path"; then
-        clish_console_core_log_error "Failed to replace $script_path. Restoring backup..."
-        cp "$backup_path" "$script_path"
-        return 1
-    fi
-    chmod +x "$script_path"
-
-    clish_console_core_log_success "Updated to version $latest_version"
-    clish_console_core_log_info "Please run 'modulash' again to use the new version."
-    return 0
+    _install_local_file "$new_file" "$script_path"
+    return 1
 }
 
 # ------------------------------------------------------------
 # Helper functions
 # ------------------------------------------------------------
+_install_local_file() {
+    local src="$1"
+    local dst="$2"
+    local backup_dir="$HOME/.modulash-backups"
+    mkdir -p "$backup_dir"
+    local backup_name="modulash.backup.$(date +%Y%m%d_%H%M%S)"
+    local backup_path="$backup_dir/$backup_name"
+    cp "$dst" "$backup_path"
+    clish_console_core_log_info "Backed up current version to $backup_path"
+    _clean_old_backups "$backup_dir"
+
+    if ! cp "$src" "$dst"; then
+        clish_console_core_log_error "Failed to replace $dst. Restoring backup..."
+        cp "$backup_path" "$dst"
+        return 1
+    fi
+    chmod +x "$dst"
+    clish_console_core_log_success "Updated successfully. Please run 'modulash' again to use the new version."
+    return 0
+}
+
 _clean_old_backups() {
     local backup_dir="$1"
     local count

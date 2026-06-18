@@ -1,6 +1,6 @@
 {
-  "name": "modkit/demo",
-  "version": "1.0.0",
+  "name": "modulash/console",
+  "version": "1.0.2",
   "description": "Modulash",
   "author": "Your Name",
   "maintainers": [
@@ -18,7 +18,6 @@
     "@cmd": "./bin/commands"
   },
   "facade": {
-    "ask": "clish_console_ask"
   },
   "scripts": {
   },

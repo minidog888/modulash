@@ -12,3 +12,6 @@ clean:
 
 build:
 	./bin/modulash build --force
+	
+publish:
+	./scripts/release.sh --project-dir ./ --release-dir ../dist/releases --release-repo git@github.com:minidog888/modulash-releases.git
