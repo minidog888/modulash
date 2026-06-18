@@ -65,7 +65,7 @@ cmd_self-update_handle() {
     fi
 
     if [[ "$debug" == "true" ]]; then
-        echo "[DEBUG] Downloaded metadata:" >&2
+        clish_console_core_log_debug "Downloaded metadata:" >&2
         cat "$meta_file" >&2
     fi
 
@@ -107,8 +107,8 @@ cmd_self-update_handle() {
     if [[ -z "$latest_version" || -z "$download_url" ]]; then
         clish_console_core_log_error "No version found for the given criteria"
         if [[ "$debug" == "true" ]]; then
-            echo "[DEBUG] latest_version='$latest_version', download_url='$download_url'" >&2
-            echo "[DEBUG] Channel: $channel, Version: $version" >&2
+            clish_console_core_log_debug "latest_version='$latest_version', download_url='$download_url'" >&2
+            clish_console_core_log_debug "Channel: $channel, Version: $version" >&2
         fi
         return 1
     fi

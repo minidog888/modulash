@@ -26,15 +26,10 @@ cmd_update_handle() {
 
     clish_console_core_log_info "Updating project dependencies..."
 
-    if declare -f module_update_all >/dev/null; then
-        (cd "$PWD" && module_update_all "$force") || {
-            clish_console_core_log_error "Update failed."
-            return 1
-        }
-    else
-        clish_console_core_log_error "module_update_all not available; please update lib/module.sh."
+    (cd "$CLISH_CONSOLE_WORK_DIR" && module_update_all "$force") || {
+        clish_console_core_log_error "Update failed."
         return 1
-    fi
+    }
 
     clish_console_core_log_success "Update completed successfully."
     return 0

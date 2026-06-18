@@ -71,7 +71,7 @@ cmd_require_handle() {
 
     clish_console_core_log_info "Selected version: $matched_version"
 
-    if [[ -d "$PWD/vendor/$package" ]] && [[ "$force" != "true" ]]; then
+    if [[ -d "$CLISH_CONSOLE_WORK_DIR/vendor/$package" ]] && [[ "$force" != "true" ]]; then
         clish_console_core_log_warning "Package $package already installed. Use --force to reinstall."
     fi
 
@@ -80,7 +80,7 @@ cmd_require_handle() {
         return 0
     fi
 
-    local config_file="$PWD/modulash.json"
+    local config_file="$CLISH_CONSOLE_WORK_DIR/modulash.json"
     if [[ ! -f "$config_file" ]]; then
         clish_console_core_log_error "modulash.json not found. Run 'modulash init' first."
         return 1

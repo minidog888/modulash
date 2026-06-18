@@ -15,7 +15,7 @@ cmd_install_options() {
 
 cmd_install_handle() {
     local force="${opt_force:-false}"
-    local lock_file="$PROJECT_ROOT/modulash.lock"
+    local lock_file="$CLISH_CONSOLE_WORK_DIR/modulash.lock"
 
     # Check if already installed
     if [[ -f "$lock_file" && "$force" != "true" ]]; then
@@ -53,7 +53,7 @@ cmd_install_handle() {
     # ============================================
     # Validate modulash.json
     # ============================================
-    if [[ ! -f "$PROJECT_ROOT/modulash.json" ]]; then
+    if [[ ! -f "$CLISH_CONSOLE_WORK_DIR/modulash.json" ]]; then
         clish_console_core_log_error "modulash.json not found in current directory."
         return 1
     fi
@@ -63,9 +63,9 @@ cmd_install_handle() {
     # Create directory structure
     # ============================================
     clish_console_core_log_info "Creating directory structure..."
-    mkdir -p "$PROJECT_ROOT/vendor"
-    mkdir -p "$PROJECT_ROOT/bin/commands"
-    mkdir -p "$PROJECT_ROOT/lib"
+    mkdir -p "$CLISH_CONSOLE_WORK_DIR/vendor"
+    mkdir -p "$CLISH_CONSOLE_WORK_DIR/bin/commands"
+    mkdir -p "$CLISH_CONSOLE_WORK_DIR/lib"
     clish_console_core_log_success "Directories created."
 
     # ============================================
@@ -73,7 +73,7 @@ cmd_install_handle() {
     # ============================================
     if declare -f generate_core >/dev/null; then
         clish_console_core_log_info "Generating bootstrap files..."
-        generate_core "$PROJECT_ROOT"
+        generate_core "$CLISH_CONSOLE_WORK_DIR"
     else
         clish_console_core_log_warning "generate_core not available; skipping bootstrap generation."
     fi
@@ -88,7 +88,7 @@ cmd_install_handle() {
         fi
 
         clish_console_core_log_info "Installing dependencies..."
-        if (cd "$PROJECT_ROOT" && module_sync_modules); then
+        if (cd "$CLISH_CONSOLE_WORK_DIR" && module_sync_modules); then
             clish_console_core_log_success "Dependencies installed."
         else
             clish_console_core_log_error "Dependency installation failed."
@@ -109,14 +109,4 @@ cmd_install_handle() {
     # ============================================
     touch "$lock_file"
     clish_console_core_log_success "Installation completed successfully."
-
-    # ============================================
-    # Next steps
-    # ============================================
-    echo ""
-    clish_console_core_log_info "Next steps:"
-    echo "  - Run './bin/modulash' to see available commands"
-    echo "  - Use './bin/modulash build' to package your application"
-    echo "  - Add new commands in bin/commands/"
-    echo ""
 }

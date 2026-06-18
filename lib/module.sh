@@ -18,18 +18,18 @@ module_run_scripts() {
     scripts=$(jq -r --arg event "$event" '.scripts[$event] // [] | .[]' "$config_file" 2>/dev/null)
     [[ -z "$scripts" ]] && return 0
 
-    echo "[INFO] Running scripts for event: $event"
+    clish_console_core_log_info "Running scripts for event: $event"
     local failed=0
     while IFS= read -r cmd; do
         echo "[RUN] $cmd"
         if ! bash -c "$cmd"; then
-            echo "[ERROR] Script failed: $cmd" >&2
+            clish_console_core_log_error "Script failed: $cmd" >&2
             ((failed++))
         fi
     done <<< "$scripts"
 
     if [[ $failed -gt 0 ]]; then
-        echo "[ERROR] $failed script(s) failed for event '$event'" >&2
+        clish_console_core_log_error "$failed script(s) failed for event '$event'" >&2
         return 1
     fi
     return 0
@@ -108,11 +108,11 @@ _write_lock_dep_version() {
     local lock_file="$PWD/modulash.lock"
     local tmp_lock="${lock_file}.tmp"
 
-    echo "[DEBUG] Writing lock: dep=$dep, version=$version, lock_file=$lock_file" >&2
+    clish_console_core_log_debug "Writing lock: dep=$dep, version=$version, lock_file=$lock_file" >&2
 
     if [[ -f "$lock_file" ]]; then
         if ! jq --arg dep "$dep" --arg ver "$version" '.dependencies[$dep] = $ver' "$lock_file" > "$tmp_lock" 2>/dev/null; then
-            echo "[ERROR] jq failed to update lock file" >&2
+            clish_console_core_log_error "jq failed to update lock file" >&2
             return 1
         fi
     else
@@ -121,10 +121,10 @@ _write_lock_dep_version() {
 
     if [[ -s "$tmp_lock" ]]; then
         mv "$tmp_lock" "$lock_file"
-        echo "[DEBUG] Lock file written successfully" >&2
+        clish_console_core_log_debug "Lock file written successfully" >&2
         return 0
     else
-        echo "[ERROR] Temporary lock file is empty" >&2
+        clish_console_core_log_error "Temporary lock file is empty" >&2
         rm -f "$tmp_lock"
         return 1
     fi
@@ -145,16 +145,16 @@ module_install_dependency_forced() {
     local api_url="$registry_url/$dep_name"
     local package_info
     if ! package_info=$(curl -s "$api_url"); then
-        echo "[ERROR] Failed to fetch package info" >&2
+        clish_console_core_log_error "Failed to fetch package info" >&2
         return 1
     fi
     if ! echo "$package_info" | jq -e . >/dev/null 2>&1; then
-        echo "[ERROR] Invalid JSON" >&2
+        clish_console_core_log_error "Invalid JSON" >&2
         return 1
     fi
 
     if ! echo "$package_info" | jq -e --arg ver "$version" '.versions[] | select(.version == $ver)' >/dev/null 2>&1; then
-        echo "[ERROR] Version $version not found for $dep_name" >&2
+        clish_console_core_log_error "Version $version not found for $dep_name" >&2
         return 1
     fi
 
@@ -169,19 +169,19 @@ module_install_dependency_forced() {
     trap 'rm -rf "$tmp_dir"' RETURN
 
     local tarball="$tmp_dir/package.tar.gz"
-    echo "[INFO] Downloading $tarball_url ..." >&2
+    clish_console_core_log_info "Downloading $tarball_url ..." >&2
     if ! curl -L -o "$tarball" "$tarball_url"; then
-        echo "[ERROR] Download failed" >&2
+        clish_console_core_log_error "Download failed" >&2
         return 1
     fi
     if ! tar -xzf "$tarball" -C "$tmp_dir"; then
-        echo "[ERROR] Extraction failed" >&2
+        clish_console_core_log_error "Extraction failed" >&2
         return 1
     fi
 
     local pkg_dir
     pkg_dir="$(_find_pkg_dir "$tmp_dir")"
-    [[ -z "$pkg_dir" ]] && { echo "[ERROR] No modulash.json" >&2; return 1; }
+    [[ -z "$pkg_dir" ]] && { clish_console_core_log_error "No modulash.json" >&2; return 1; }
 
     mkdir -p "$target_dir"
     cp -r "$pkg_dir"/* "$target_dir"/
@@ -190,10 +190,10 @@ module_install_dependency_forced() {
     module_enable_module "$dep_name"
 
     if ! _write_lock_dep_version "$dep_name" "$version"; then
-        echo "[WARN] Failed to write lock file, but installation succeeded" >&2
+        clish_console_core_log_warning "Failed to write lock file, but installation succeeded" >&2
     fi
 
-    echo "[SUCCESS] Installed $dep_name $version" >&2
+    clish_console_core_log_success "Installed $dep_name $version" >&2
     module_run_scripts "post-package-install" || true
     return 0
 }
@@ -217,11 +217,11 @@ module_install_dependency() {
     local api_url="$registry_url/$dep_name"
     local package_info
     if ! package_info=$(curl -s "$api_url"); then
-        echo "[ERROR] Failed to fetch package info" >&2
+        clish_console_core_log_error "Failed to fetch package info" >&2
         return 1
     fi
     if ! echo "$package_info" | jq -e . >/dev/null 2>&1; then
-        echo "[ERROR] Invalid JSON" >&2
+        clish_console_core_log_error "Invalid JSON" >&2
         return 1
     fi
     # shellcheck disable=SC2207
@@ -242,11 +242,11 @@ module_enable_module() {
     local module_dir="$PWD/vendor/$module_name"
     local commands_dir="$PWD/bin/commands"
     if [[ ! -d "$module_dir" ]]; then
-        echo "Error: Module '$module_name' not installed" >&2
+        clish_console_core_log_error "odule '$module_name' not installed" >&2
         return 1
     fi
     if [[ ! -f "$module_dir/modulash.json" ]]; then
-        echo "Error: Invalid module (no modulash.json)" >&2
+        clish_console_core_log_error "Invalid module (no modulash.json)" >&2
         return 1
     fi
     mkdir -p "$commands_dir"
@@ -254,10 +254,10 @@ module_enable_module() {
         # shellcheck disable=SC2115
         rm -rf "$commands_dir/$module_name"
         ln -s "$module_dir/commands" "$commands_dir/$module_name"
-        echo "[INFO] Enabled commands for $module_name" >&2
+        clish_console_core_log_info "Enabled commands for $module_name" >&2
         return 0
     else
-        echo "[INFO] Module $module_name has no commands" >&2
+        clish_console_core_log_info "Module $module_name has no commands" >&2
         return 0
     fi
 }
@@ -268,10 +268,10 @@ module_disable_module() {
     if [[ -L "$commands_dir/$module_name" ]] || [[ -d "$commands_dir/$module_name" ]]; then
         # shellcheck disable=SC2115
         rm -rf "$commands_dir/$module_name"
-        echo "Disabled $module_name"
+        clish_console_core_log_info "Disabled $module_name"
         return 0
     else
-        echo "Module not enabled: $module_name"
+        clish_console_core_log_info "Module not enabled: $module_name"
         return 1
     fi
 }
@@ -280,10 +280,10 @@ module_list_modules() {
     local vendor_dir="$PWD/vendor"
     local commands_dir="$PWD/bin/commands"
     if [[ ! -d "$vendor_dir" ]]; then
-        echo "No modules installed"
+        clish_console_core_log_info "No modules installed"
         return 0
     fi
-    echo "Installed modules:"
+    clish_console_core_log_info "Installed modules:"
     for mod_dir in "$vendor_dir"/*/; do
         if [[ -d "$mod_dir" ]]; then
             local mod_name
@@ -295,9 +295,9 @@ module_list_modules() {
                 else
                     status="installed (not linked)"
                 fi
-                echo "  $mod_name - $status"
+                clish_console_core_log_info "  $mod_name - $status"
             else
-                echo "  $mod_name - invalid"
+                clish_console_core_log_warning "  $mod_name - invalid"
             fi
         fi
     done
@@ -323,11 +323,11 @@ _find_pkg_dir() {
 # ------------------------------------------------------------
 module_sync_modules() {
     if ! command -v jq >/dev/null 2>&1; then
-        echo "[ERROR] jq required" >&2
+        clish_console_core_log_error "jq required" >&2
         return 1
     fi
     local config_file="$PWD/modulash.json"
-    [[ ! -f "$config_file" ]] && { echo "[ERROR] modulash.json not found" >&2; return 1; }
+    [[ ! -f "$config_file" ]] && { clish_console_core_log_error "modulash.json not found" >&2; return 1; }
 
     module_run_scripts "pre-install" || true
 
@@ -336,32 +336,32 @@ module_sync_modules() {
     local modules
     modules="$(jq -r 'keys[]' <<< "$deps_json")"
     if [[ -z "$modules" ]]; then
-        echo "[INFO] No dependencies found"
+        clish_console_core_log_info "No dependencies found"
         return 0
     fi
 
-    echo "[INFO] Installing dependencies..."
+    clish_console_core_log_info "Installing dependencies..."
     local failed=0
     for mod in $modules; do
         local constraint
         constraint="$(jq -r ".\"$mod\"" <<< "$deps_json")"
         if [[ -d "$PWD/vendor/$mod" ]]; then
-            echo "[INFO] $mod already installed"
+            clish_console_core_log_info "$mod already installed"
             continue
         fi
-        echo "[INFO] Installing $mod ($constraint)"
+        clish_console_core_log_info "Installing $mod ($constraint)"
         if ! module_install_dependency "$mod" "$constraint"; then
-            echo "[ERROR] Failed to install $mod" >&2
+            clish_console_core_log_error "Failed to install $mod" >&2
             ((failed++))
         fi
     done
 
     module_run_scripts "post-install" || true
     if [[ $failed -gt 0 ]]; then
-        echo "[ERROR] Some installs failed" >&2
+        clish_console_core_log_error "Some installs failed" >&2
         return 1
     fi
-    echo "[SUCCESS] All dependencies installed"
+    clish_console_core_log_success "All dependencies installed"
     return 0
 }
 
@@ -374,34 +374,34 @@ module_update_dependency() {
     local force="${3:-false}"
     local registry_url
     registry_url="$(module_get_registry_url)"
-    [[ -z "$registry_url" ]] && { echo "[ERROR] No registry URL" >&2; return 1; }
+    [[ -z "$registry_url" ]] && { clish_console_core_log_error "No registry URL" >&2; return 1; }
 
     module_run_scripts "pre-package-install" || true
 
     local api_url="$registry_url/$dep_name"
     local package_info
     if ! package_info=$(curl -s "$api_url"); then
-        echo "[ERROR] Failed to fetch package info" >&2
+        clish_console_core_log_error "Failed to fetch package info" >&2
         return 1
     fi
     if ! echo "$package_info" | jq -e . >/dev/null 2>&1; then
-        echo "[ERROR] Invalid JSON" >&2
+        clish_console_core_log_error "Invalid JSON" >&2
         return 1
     fi
 
     # shellcheck disable=SC2207
     versions=($(echo "$package_info" | jq -r '.versions[].version' | sort -V))
-    [[ ${#versions[@]} -eq 0 ]] && { echo "[ERROR] No versions" >&2; return 1; }
+    [[ ${#versions[@]} -eq 0 ]] && { clish_console_core_log_error "No versions" >&2; return 1; }
 
     local matched_version
     matched_version="$(module_match_version "$constraint" "${versions[@]}")"
-    [[ -z "$matched_version" ]] && { echo "[ERROR] No matching version" >&2; return 1; }
+    [[ -z "$matched_version" ]] && { clish_console_core_log_error "No matching version" >&2; return 1; }
 
     local locked_version
     locked_version="$(_read_lock_dep_version "$dep_name")"
 
     if [[ "$force" != "true" && -n "$locked_version" && "$locked_version" == "$matched_version" ]]; then
-        echo "[INFO] $dep_name locked at $locked_version (already up-to-date)"
+        clish_console_core_log_info "$dep_name locked at $locked_version (already up-to-date)"
         module_run_scripts "post-package-install" || true
         return 0
     fi
@@ -419,19 +419,19 @@ module_update_dependency() {
     trap 'rm -rf "$tmp_dir"' RETURN
 
     local tarball="$tmp_dir/package.tar.gz"
-    echo "[INFO] Downloading $tarball_url ..." >&2
+    clish_console_core_log_info "Downloading $tarball_url ..." >&2
     if ! curl -L -o "$tarball" "$tarball_url"; then
-        echo "[ERROR] Download failed" >&2
+        clish_console_core_log_error "Download failed" >&2
         return 1
     fi
     if ! tar -xzf "$tarball" -C "$tmp_dir"; then
-        echo "[ERROR] Extraction failed" >&2
+        clish_console_core_log_error "Extraction failed" >&2
         return 1
     fi
 
     local pkg_dir
     pkg_dir="$(_find_pkg_dir "$tmp_dir")"
-    [[ -z "$pkg_dir" ]] && { echo "[ERROR] No modulash.json" >&2; return 1; }
+    [[ -z "$pkg_dir" ]] && { clish_console_core_log_error "No modulash.json" >&2; return 1; }
 
     mkdir -p "$target_dir"
     cp -r "$pkg_dir"/* "$target_dir"/
@@ -440,10 +440,10 @@ module_update_dependency() {
     module_enable_module "$dep_name"
 
     if ! _write_lock_dep_version "$dep_name" "$matched_version"; then
-        echo "[WARN] Failed to write lock file, but update succeeded" >&2
+        clish_console_core_log_warning "Failed to write lock file, but update succeeded" >&2
     fi
 
-    echo "[SUCCESS] Updated $dep_name to $matched_version" >&2
+    clish_console_core_log_success "Updated $dep_name to $matched_version" >&2
     module_run_scripts "post-package-install" || true
     return 0
 }
@@ -451,11 +451,11 @@ module_update_dependency() {
 module_update_all() {
     local force="${1:-false}"
     if ! command -v jq >/dev/null 2>&1; then
-        echo "[ERROR] jq required" >&2
+        clish_console_core_log_error "jq required" >&2
         return 1
     fi
     local config_file="$PWD/modulash.json"
-    [[ ! -f "$config_file" ]] && { echo "[ERROR] modulash.json not found" >&2; return 1; }
+    [[ ! -f "$config_file" ]] && { clish_console_core_log_error "modulash.json not found" >&2; return 1; }
 
     module_run_scripts "pre-update" || true
 
@@ -464,27 +464,27 @@ module_update_all() {
     local modules
     modules="$(jq -r 'keys[]' <<< "$deps_json")"
     if [[ -z "$modules" ]]; then
-        echo "[INFO] No dependencies found" >&2
+        clish_console_core_log_info "No dependencies found" >&2
         return 0
     fi
 
-    echo "[INFO] Updating all dependencies..." >&2
+    clish_console_core_log_info "Updating all dependencies..." >&2
     local failed=0
     for mod in $modules; do
         local constraint
         constraint="$(jq -r ".\"$mod\"" <<< "$deps_json")"
         if ! module_update_dependency "$mod" "$constraint" "$force"; then
-            echo "[ERROR] Failed to update $mod" >&2
+            clish_console_core_log_error "Failed to update $mod" >&2
             ((failed++))
         fi
     done
 
     module_run_scripts "post-update" || true
     if [[ $failed -gt 0 ]]; then
-        echo "[ERROR] Some updates failed" >&2
+        clish_console_core_log_error "Some updates failed" >&2
         return 1
     fi
-    echo "[SUCCESS] All dependencies updated" >&2
+    clish_console_core_log_success "All dependencies updated" >&2
     return 0
 }
 
@@ -497,7 +497,7 @@ module_install_module() {
     local target_dir="$PWD/vendor/$module_name"
 
     if [[ -d "$target_dir" ]]; then
-        echo "Error: Module '$module_name' already exists" >&2
+        clish_console_core_log_error "Module '$module_name' already exists" >&2
         return 1
     fi
 
@@ -507,17 +507,17 @@ module_install_module() {
         cp -r "$source_url" "$target_dir"
     elif [[ "$source_url" =~ ^https?:// ]] || [[ "$source_url" =~ \.git$ ]]; then
         if ! command -v git >/dev/null 2>&1; then
-            echo "Error: git is required" >&2
+            clish_console_core_log_error "git is required" >&2
             return 1
         fi
         git clone "$source_url" "$target_dir" || return 1
     else
-        echo "Error: Unsupported source format" >&2
+        clish_console_core_log_error "Unsupported source format" >&2
         return 1
     fi
 
     if [[ ! -f "$target_dir/modulash.json" ]]; then
-        echo "Error: Source does not contain modulash.json" >&2
+        clish_console_core_log_error "Source does not contain modulash.json" >&2
         rm -rf "$target_dir"
         return 1
     fi
@@ -526,6 +526,6 @@ module_install_module() {
     source "$target_dir/bootstrap.sh" 2>/dev/null || true
 
     module_enable_module "$module_name"
-    echo "Module '$module_name' installed successfully"
+    clish_console_core_log_success "Module '$module_name' installed successfully"
     return 0
 }

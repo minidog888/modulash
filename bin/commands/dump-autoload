@@ -7,9 +7,9 @@ cmd_dump-autoload_description() {
 }
 
 cmd_dump-autoload_handle() {
-    local project_root="$PWD"
-    local config_file="$project_root/modulash.json"
-    local output_dir="$project_root/vendor/modulash"
+    local work_dir="$CLISH_CONSOLE_WORK_DIR"
+    local config_file="$work_dir/modulash.json"
+    local output_dir="$work_dir/vendor/modulash"
     local aliases_file="$output_dir/aliases.sh"
     local facades_file="$output_dir/facades.sh"
 
@@ -39,7 +39,7 @@ cmd_dump-autoload_handle() {
     local vendor_dir
     vendor_dir=$(jq -r '.["vendor-dir"] // "./vendor"' "$config_file")
     vendor_dir=$(normalize_path "$vendor_dir")
-    local vendor_dir_abs="$project_root/$vendor_dir"
+    local vendor_dir_abs="$work_dir/$vendor_dir"
 
     # ============================================
     # 1. Generate aliases
@@ -62,7 +62,7 @@ cmd_dump-autoload_handle() {
             for pkg_dir in "$vendor_subdir"/*/; do
                 local config="$pkg_dir/modulash.json"
                 [[ -f "$config" ]] || continue
-                local pkg_rel_path="${pkg_dir#$project_root/}"
+                local pkg_rel_path="${pkg_dir#$work_dir/}"
                 pkg_rel_path=$(normalize_path "$pkg_rel_path")
                 while IFS= read -r alias; do
                     [[ -z "$alias" ]] && continue
@@ -158,5 +158,5 @@ cmd_dump-autoload_handle() {
         clish_console_core_log_success "Generated facades: $output"
     }
 
-    _generate_facades "$facades_file" "$project_root"
+    _generate_facades "$facades_file" "$work_dir"
 }
