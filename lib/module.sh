@@ -187,7 +187,6 @@ module_install_dependency_forced() {
     cp -r "$pkg_dir"/* "$target_dir"/
     # shellcheck disable=SC1091
     source "$target_dir/bootstrap.sh" 2>/dev/null || true
-    module_enable_module "$dep_name"
 
     if ! _write_lock_dep_version "$dep_name" "$version"; then
         clish_console_core_log_warning "Failed to write lock file, but installation succeeded" >&2
@@ -235,74 +234,8 @@ module_install_dependency() {
 }
 
 # ------------------------------------------------------------
-# Enable/disable/list
+# Helper: find package directory
 # ------------------------------------------------------------
-module_enable_module() {
-    local module_name="$1"
-    local module_dir="$PWD/vendor/$module_name"
-    local commands_dir="$PWD/bin/commands"
-    if [[ ! -d "$module_dir" ]]; then
-        clish_console_core_log_error "odule '$module_name' not installed" >&2
-        return 1
-    fi
-    if [[ ! -f "$module_dir/modulash.json" ]]; then
-        clish_console_core_log_error "Invalid module (no modulash.json)" >&2
-        return 1
-    fi
-    mkdir -p "$commands_dir"
-    if [[ -d "$module_dir/commands" ]]; then
-        # shellcheck disable=SC2115
-        rm -rf "$commands_dir/$module_name"
-        ln -s "$module_dir/commands" "$commands_dir/$module_name"
-        clish_console_core_log_info "Enabled commands for $module_name" >&2
-        return 0
-    else
-        clish_console_core_log_info "Module $module_name has no commands" >&2
-        return 0
-    fi
-}
-
-module_disable_module() {
-    local module_name="$1"
-    local commands_dir="$PWD/bin/commands"
-    if [[ -L "$commands_dir/$module_name" ]] || [[ -d "$commands_dir/$module_name" ]]; then
-        # shellcheck disable=SC2115
-        rm -rf "$commands_dir/$module_name"
-        clish_console_core_log_info "Disabled $module_name"
-        return 0
-    else
-        clish_console_core_log_info "Module not enabled: $module_name"
-        return 1
-    fi
-}
-
-module_list_modules() {
-    local vendor_dir="$PWD/vendor"
-    local commands_dir="$PWD/bin/commands"
-    if [[ ! -d "$vendor_dir" ]]; then
-        clish_console_core_log_info "No modules installed"
-        return 0
-    fi
-    clish_console_core_log_info "Installed modules:"
-    for mod_dir in "$vendor_dir"/*/; do
-        if [[ -d "$mod_dir" ]]; then
-            local mod_name
-            mod_name="$(basename "$mod_dir")"
-            if [[ -f "$mod_dir/modulash.json" ]]; then
-                local status
-                if [[ -L "$commands_dir/$mod_name" ]] || [[ -d "$commands_dir/$mod_name" ]]; then
-                    status="enabled"
-                else
-                    status="installed (not linked)"
-                fi
-                clish_console_core_log_info "  $mod_name - $status"
-            else
-                clish_console_core_log_warning "  $mod_name - invalid"
-            fi
-        fi
-    done
-}
-
 _find_pkg_dir() {
     local root="$1"
     if [[ -f "$root/modulash.json" ]]; then
@@ -437,7 +370,6 @@ module_update_dependency() {
     cp -r "$pkg_dir"/* "$target_dir"/
     # shellcheck disable=SC1091
     source "$target_dir/bootstrap.sh" 2>/dev/null || true
-    module_enable_module "$dep_name"
 
     if ! _write_lock_dep_version "$dep_name" "$matched_version"; then
         clish_console_core_log_warning "Failed to write lock file, but update succeeded" >&2
@@ -525,7 +457,6 @@ module_install_module() {
     # shellcheck disable=SC1091
     source "$target_dir/bootstrap.sh" 2>/dev/null || true
 
-    module_enable_module "$module_name"
     clish_console_core_log_success "Module '$module_name' installed successfully"
     return 0
 }
