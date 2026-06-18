@@ -108,23 +108,16 @@ _write_lock_dep_version() {
     local lock_file="$PWD/modulash.lock"
     local tmp_lock="${lock_file}.tmp"
 
-    clish_console_core_log_debug "Writing lock: dep=$dep, version=$version, lock_file=$lock_file" >&2
+    mkdir -p "$(dirname "$lock_file")"
 
-    if [[ -f "$lock_file" ]]; then
-        if ! jq --arg dep "$dep" --arg ver "$version" '.dependencies[$dep] = $ver' "$lock_file" > "$tmp_lock" 2>/dev/null; then
-            clish_console_core_log_error "jq failed to update lock file" >&2
-            return 1
-        fi
-    else
-        echo "{\"dependencies\":{\"$dep\":\"$version\"}}" > "$tmp_lock"
-    fi
+    echo "{\"dependencies\":{\"$dep\":\"$version\"}}" > "$tmp_lock"
 
     if [[ -s "$tmp_lock" ]]; then
         mv "$tmp_lock" "$lock_file"
         clish_console_core_log_debug "Lock file written successfully" >&2
         return 0
     else
-        clish_console_core_log_error "Temporary lock file is empty" >&2
+        clish_console_core_log_error "Failed to write lock file" >&2
         rm -f "$tmp_lock"
         return 1
     fi

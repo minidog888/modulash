@@ -89,15 +89,12 @@ cmd_create-project_handle() {
     # Sync dependencies (install missing modules)
     # -------------------------------------------------------------
     if declare -f module_sync_modules >/dev/null; then
-        clish_console_core_log_info "Syncing dependencies from $PWD/modulash.json ..."
-        (cd "$PWD" && {
-            echo "[DEBUG] Current directory: $PWD" >&2
-            echo "[DEBUG] modulash.json exists: $([ -f modulash.json ] && echo yes || echo no)" >&2
-            if [[ -f modulash.json ]]; then
-                echo "[DEBUG] Dependencies: $(jq -r '.dependencies // {} | keys[]' modulash.json 2>/dev/null)" >&2
-            fi
-            module_sync_modules
-        }) || clish_console_core_log_warning "Dependency sync failed."
+        clish_console_core_log_info "Installing dependencies from $PWD/modulash.json ..."
+        if module_sync_modules; then
+            clish_console_core_log_success "Dependencies installed successfully."
+        else
+            clish_console_core_log_warning "Dependency installation had issues (see above)."
+        fi
     else
         clish_console_core_log_warning "module_sync_modules not available; dependencies not installed."
     fi
