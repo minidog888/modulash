@@ -23,7 +23,6 @@ assert_output_contains() {
     fi
 }
 
-# 从 clish.build.json 读取 output 字段
 get_build_output() {
     local config="$PROJECT_ROOT/modulash.build.json"
     if [[ -f "$config" ]] && command -v jq >/dev/null 2>&1; then

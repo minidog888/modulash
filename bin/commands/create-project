@@ -36,8 +36,8 @@ cmd_create-project_handle() {
     fi
 
     local registry_url
-    if [[ -f "$PROJECT_ROOT/modulash.json" ]]; then
-        registry_url=$(jq -r '.registry.default // "http://localhost:8000/api/packages"' "$PROJECT_ROOT/modulash.json")
+    if [[ -f "$CLISH_CONSOLE_WORK_DIR/modulash.json" ]]; then
+        registry_url=$(jq -r '.registry.default // "http://localhost:8000/api/packages"' "$CLISH_CONSOLE_WORK_DIR/modulash.json")
     else
         registry_url="http://localhost:8000/api/packages"
     fi
@@ -75,7 +75,6 @@ cmd_create-project_handle() {
     fi
 
     cd "$project_dir" || return 1
-    # 不再设置 PROJECT_ROOT
 
     # Generate core bootstrap files
     if declare -f generate_core >/dev/null; then
@@ -91,7 +90,6 @@ cmd_create-project_handle() {
     # -------------------------------------------------------------
     if declare -f module_sync_modules >/dev/null; then
         clish_console_core_log_info "Syncing dependencies from $PWD/modulash.json ..."
-        # Run in subshell with PROJECT_ROOT set
         (cd "$PWD" && {
             echo "[DEBUG] Current directory: $PWD" >&2
             echo "[DEBUG] modulash.json exists: $([ -f modulash.json ] && echo yes || echo no)" >&2

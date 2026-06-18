@@ -12,6 +12,7 @@
     "*.log",
     "*.json",
     "*.tmp",
+    "*.git*",
     "lib/helpers.sh"
   ],
   "output": "./dist/modulash",

@@ -33,7 +33,7 @@ cmd_init_handle() {
     if $global_mode; then
         target_dir="${MODULASH_HOME:-$HOME/.modulash}"
     else
-        if [[ -f "modulash.json" || -f "clish.build.json" ]]; then
+        if [[ -f "modulash.json" || -f "modulash.build.json" ]]; then
             target_dir="$PWD"
         else
             target_dir="$PWD"
@@ -132,9 +132,7 @@ cmd_init_handle() {
   }
 }
 EOF
-
     echo "Created modulash.json"
-
     generate_core "$PWD"
 
     echo "Modulash project initialized successfully in $(pwd)"

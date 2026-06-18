@@ -2,8 +2,6 @@
 # ============================================
 # Command: install — Install Modulash project and dependencies
 # ============================================
-
-# Load module management library (if available)
 import "@/lib/module.sh" 2>/dev/null || true
 import "@/lib/generator.sh" 2>/dev/null || true
 

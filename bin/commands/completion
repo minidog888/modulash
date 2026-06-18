@@ -1,38 +1,202 @@
 #!/usr/bin/env bash
 # ============================================
-# Command: completion — Generate Bash completion script
+# Command: completion — Generate shell completion scripts
 # ============================================
 
 cmd_completion_description() {
-    echo "Generate Bash completion script for Modulash"
+    echo "Generate and optionally install shell completion scripts"
+}
+
+cmd_completion_options() {
+    clish_console_core_options_option "bash" "Generate Bash completion script"
+    clish_console_core_options_option "zsh" "Generate Zsh completion script"
+    clish_console_core_options_option "fish" "Generate Fish completion script"
+    clish_console_core_options_option "install" "Automatically install completion for current shell (no manual sourcing)"
+    clish_console_core_options_option "user" "Install to user directory (~/.local/share/...) instead of system directory"
+    clish_console_core_options_option "shell" "Override detected shell (bash, zsh, fish)" --arg
 }
 
 cmd_completion_handle() {
-    cat <<'EOF'
-# Modulash Bash Completion (compatible)
-_modulash_completion() {
-    local cur prev
-    cur="${COMP_WORDS[COMP_CWORD]}"
-    prev="${COMP_WORDS[COMP_CWORD-1]}"
+    local shell="${arg_shell:-}"
+    local install="${opt_install:-false}"
+    local user="${opt_user:-false}"
 
-    # Get available commands
-    local commands
-    if [[ -d "$PROJECT_ROOT/bin/commands" ]]; then
-        commands=$(find "$PROJECT_ROOT/bin/commands" -maxdepth 2 -type f -perm +111 -exec basename {} \; 2>/dev/null | sort -u)
-    else
-        commands="build create-project dump-autoload install completion"
+    # If --install is used, auto-detect shell and install
+    if [[ "$install" == "true" ]]; then
+        if [[ -z "$shell" ]]; then
+            # Auto-detect current shell
+            if [[ -n "$SHELL" ]]; then
+                shell="$(basename "$SHELL")"
+            else
+                # Fallback: get from process
+                shell="$(ps -p $$ -o comm= 2>/dev/null | sed 's/^-//')"
+            fi
+            if [[ -z "$shell" ]]; then
+                clish_console_core_log_error "Could not detect current shell. Please specify with --shell."
+                return 1
+            fi
+            clish_console_core_log_info "Detected shell: $shell"
+        fi
+        _auto_install_completion "$shell" "$user"
+        return $?
     fi
 
-    # Global options
-    local options="-h --help -q --quiet -V --version -n --no-interaction -v --verbose"
+    # If shell not specified, show help
+    if [[ -z "$shell" ]]; then
+        _show_completion_help
+        return 0
+    fi
 
-    if [[ "$cur" == -* ]]; then
-        COMPREPLY=($(compgen -W "$options" -- "$cur"))
-        return
+    # Generate completion script for specified shell
+    case "$shell" in
+        bash)
+            _generate_bash_completion
+            ;;
+        zsh)
+            _generate_zsh_completion
+            ;;
+        fish)
+            _generate_fish_completion
+            ;;
+        *)
+            clish_console_core_log_error "Unsupported shell: $shell"
+            clish_console_core_log_info "Supported: bash, zsh, fish"
+            _show_completion_help
+            return 1
+            ;;
+    esac
+}
+
+_show_completion_help() {
+    cat <<EOF
+Usage: modulash completion <shell>
+
+Generate shell completion scripts for modulash commands.
+
+Supported shells:
+  bash   - Bash completion
+  zsh    - Zsh completion
+  fish   - Fish completion
+
+To enable completions, source the output in your shell profile:
+
+  Bash (add to ~/.bashrc):
+    source <(modulash completion bash)
+
+  Zsh (add to ~/.zshrc):
+    source <(modulash completion zsh)
+
+  Fish (add to ~/.config/fish/config.fish):
+    modulash completion fish | source
+
+Or auto-install by detecting current shell:
+  modulash completion --install
+EOF
+}
+
+_generate_bash_completion() {
+    cat <<'EOF'
+_modulash_completion() {
+    local cur prev words cword
+    _init_completion || return
+
+    local commands
+    commands=$(modulash list-commands 2>/dev/null | awk '{print $1}')
+
+    if [[ $cword -eq 1 ]]; then
+        COMPREPLY=($(compgen -W "$commands" -- "$cur"))
+        return 0
     fi
 
     COMPREPLY=($(compgen -W "$commands" -- "$cur"))
 }
 complete -F _modulash_completion modulash
 EOF
+}
+
+_generate_zsh_completion() {
+    cat <<'EOF'
+#compdef modulash
+
+_modulash() {
+    local -a commands
+    commands=(${(f)"$(modulash list-commands 2>/dev/null | awk '{print $1}')"})
+    _describe 'modulash commands' commands
+}
+compdef _modulash modulash
+EOF
+}
+
+_generate_fish_completion() {
+    cat <<'EOF'
+function __fish_modulash_complete_commands
+    modulash list-commands 2>/dev/null | awk '{print $1}'
+end
+
+complete -c modulash -f -a "(__fish_modulash_complete_commands)"
+EOF
+}
+
+_auto_install_completion() {
+    local shell="$1"
+    local user="${2:-false}"
+    local install_dir=""
+    local target_file=""
+
+    case "$shell" in
+        bash)
+            if [[ "$user" == "true" ]]; then
+                install_dir="$HOME/.local/share/bash-completion/completions"
+                mkdir -p "$install_dir"
+            else
+                install_dir="/etc/bash_completion.d"
+                if [[ ! -w "$install_dir" ]]; then
+                    clish_console_core_log_error "System directory $install_dir not writable. Try with sudo or use --user."
+                    return 1
+                fi
+            fi
+            target_file="$install_dir/modulash"
+            _generate_bash_completion | sudo tee "$target_file" >/dev/null
+            ;;
+        zsh)
+            if [[ "$user" == "true" ]]; then
+                install_dir="$HOME/.local/share/zsh/site-functions"
+                mkdir -p "$install_dir"
+            else
+                install_dir="/usr/local/share/zsh/site-functions"
+                if [[ ! -w "$install_dir" ]]; then
+                    clish_console_core_log_error "System directory $install_dir not writable. Try with sudo or use --user."
+                    return 1
+                fi
+            fi
+            target_file="$install_dir/_modulash"
+            _generate_zsh_completion | sudo tee "$target_file" >/dev/null
+            ;;
+        fish)
+            if [[ "$user" == "true" ]]; then
+                install_dir="$HOME/.config/fish/completions"
+                mkdir -p "$install_dir"
+            else
+                install_dir="/usr/share/fish/vendor_completions.d"
+                if [[ ! -w "$install_dir" ]]; then
+                    clish_console_core_log_error "System directory $install_dir not writable. Try with sudo or use --user."
+                    return 1
+                fi
+            fi
+            target_file="$install_dir/modulash.fish"
+            _generate_fish_completion | sudo tee "$target_file" >/dev/null
+            ;;
+        *)
+            clish_console_core_log_error "Unsupported shell: $shell"
+            return 1
+            ;;
+    esac
+
+    clish_console_core_log_success "Completion installed to $target_file"
+    if [[ "$user" == "true" ]]; then
+        clish_console_core_log_info "Restart your shell to enable completion."
+    else
+        clish_console_core_log_info "If you used sudo, you may need to restart or source the file."
+    fi
+    return 0
 }

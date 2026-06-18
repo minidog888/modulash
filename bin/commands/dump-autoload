@@ -2,13 +2,6 @@
 # ============================================
 # Command: dump-autoload — Generate aliases and facades
 # ============================================
-
-# Self-contained log functions
-log_error() { echo "[ERROR] $*" >&2; }
-log_info() { echo "[INFO] $*"; }
-log_success() { echo "[SUCCESS] $*"; }
-log_warning() { echo "[WARNING] $*" >&2; }
-
 cmd_dump-autoload_description() {
     echo "Generate aliases and facades from modulash.json"
 }
@@ -21,7 +14,7 @@ cmd_dump-autoload_handle() {
     local facades_file="$output_dir/facades.sh"
 
     if [[ ! -f "$config_file" ]]; then
-        log_error "modulash.json not found in current directory: $config_file"
+        clish_console_core_log_error "modulash.json not found in current directory: $config_file"
         return 1
     fi
 
@@ -102,8 +95,8 @@ cmd_dump-autoload_handle() {
         echo ')'
     } > "$aliases_file"
 
-    log_success "Generated aliases: $aliases_file"
-    log_info "Total aliases: ${#aliases[@]}"
+    clish_console_core_log_success "Generated aliases: $aliases_file"
+    clish_console_core_log_info "Total aliases: ${#aliases[@]}"
 
     # ============================================
     # 2. Generate facades (with automatic argument passing)
@@ -117,7 +110,7 @@ cmd_dump-autoload_handle() {
 
         if [[ -z "$user_facades" ]]; then
             rm -f "$output"
-            log_info "No facades declared, skipped generation"
+            clish_console_core_log_info "No facades declared, skipped generation"
             return
         fi
 
@@ -130,7 +123,7 @@ cmd_dump-autoload_handle() {
             echo '# Edit modulash.json to customize facades, then run dump-autoload again.'
             echo '# Example:'
             echo '#   "facade": {'
-            echo '#     "info": "clish_console_log_info"      # auto-pass all arguments'
+            echo '#     "info": "clish_console_core_log_info"      # auto-pass all arguments'
             echo '#   }'
             echo '# ============================================'
             echo ''
@@ -141,7 +134,7 @@ cmd_dump-autoload_handle() {
                 body=$(jq -r --arg short "$short" '.facade[$short]' "$root/modulash.json")
                 # Validate function name
                 if [[ ! "$short" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]]; then
-                    log_warning "Invalid short name '$short'"
+                    clish_console_core_log_warning "Invalid short name '$short'"
                     continue
                 fi
                 # If body is a simple identifier (letters, digits, underscore), auto-add "$@"
@@ -157,12 +150,12 @@ cmd_dump-autoload_handle() {
 
             if [[ "$has_any" == "false" ]]; then
                 rm -f "$output"
-                log_info "No valid facades found, removed generation"
+                clish_console_core_log_info "No valid facades found, removed generation"
                 return
             fi
         } > "$output"
 
-        log_success "Generated facades: $output"
+        clish_console_core_log_success "Generated facades: $output"
     }
 
     _generate_facades "$facades_file" "$project_root"
