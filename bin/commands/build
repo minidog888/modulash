@@ -150,6 +150,14 @@ cmd_build_handle() {
 
     _add_file() {
         local file="$1"
+        local force="${2:-false}"
+        # Skip entry file unless forced
+        if [[ "$force" != "true" && "$file" == "$entry" ]]; then
+            if [[ "$verbose" == "true" ]]; then
+                clish_console_core_log_debug "Skipping entry file (will be added last): $file"
+            fi
+            return
+        fi
         for seen_file in "${seen[@]}"; do
             [[ "$seen_file" == "$file" ]] && return
         done
@@ -225,7 +233,8 @@ cmd_build_handle() {
         fi
     done
 
-    _add_file "$entry"
+    # Add entry file last (force add)
+    _add_file "$entry" "true"
 
     if [[ "$verbose" == "true" ]]; then
         clish_console_core_log_info "Collected ${#all_files[@]} files"
@@ -243,8 +252,8 @@ cmd_build_handle() {
 
     # Read version from modulash.json
     local version
-    if [[ -f "$MODULASH_WORK_DIR/modulash.json" ]]; then
-        version=$(jq -r '.version // "unknown"' "$MODULASH_WORK_DIR/modulash.json")
+    if [[ -f "$CLISH_CONSOLE_WORK_DIR/modulash.json" ]]; then
+        version=$(jq -r '.version // "unknown"' "$CLISH_CONSOLE_WORK_DIR/modulash.json")
     else
         version="unknown"
     fi
