@@ -265,7 +265,7 @@ cmd_build_handle() {
         echo '# ============================================'
         echo 'set -eo pipefail'
         echo ''
-        echo "export MODULASH_VERSION=\"$version\""
+        echo "export MODULASH_PROJECT_VERSION=\"$version\""
         echo 'export MODULASH_PACKAGED=true'
         if [[ "$enable_debug" == "true" ]]; then
             echo 'export MODULASH_DEBUG_MODE=true'

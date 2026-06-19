@@ -63,7 +63,7 @@ cmd_self-update_handle() {
         fi
     done
 
-    local current_version="${MODULASH_VERSION:-unknown}"
+    local current_version="${MODULASH_PROJECT_VERSION:-unknown}"
     clish_console_core_log_info "Current version: $current_version"
 
     local tmp_dir
